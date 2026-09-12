@@ -646,8 +646,12 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 replacement.forEach { $0.setMuted(!self.soundEnabled) }
                 if self.suspended { self.releaseSurfaces() }
                 else if self.presentsWindows {
-                    replacement.forEach { $0.window.alphaValue = fade ? 0 : 1; $0.show(paused: self.shouldPause) }
-                    if fade { self.beginTransition() }
+                    if fade {
+                        replacement.forEach { $0.window.alphaValue = 0; $0.show(paused: self.shouldPause) }
+                        self.beginTransition()
+                    } else {
+                        replacement.forEach { self.reveal($0) }
+                    }
                 }
                 self.ensureStatusItem()
                 self.updateMenu()
@@ -881,12 +885,41 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             surfaces.forEach { $0.setPaused(shouldPause) }
             activeSharedVideoHub?.setMuted(!soundEnabled)
             surfaces.forEach { $0.setMuted(!soundEnabled) }
-            if presentsWindows { surfaces.forEach { $0.show(paused: shouldPause) } }
+            if presentsWindows { surfaces.forEach { self.reveal($0) } }
         } catch {
             stop()
             showError(error.localizedDescription)
         }
         updateMenu()
+    }
+
+    /// Shows a surface without the black flash: the window orders in fully
+    /// transparent and fades up once the renderer has produced its first
+    /// frame (2s timeout falls back to today's behavior so a stalled or
+    /// paused renderer can never leave an invisible desktop).
+    private var revealTimers: [Timer] = []
+    private func reveal(_ surface: WallpaperSurface) {
+        surface.window.alphaValue = 0
+        surface.show(paused: shouldPause)
+        var attempts = 0
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak surface, weak self] timer in
+            attempts += 1
+            let ready = (surface?.diagnostics.frameCount ?? 0) > 0
+            guard ready || attempts >= 20 else { return }
+            timer.invalidate()
+            self?.revealTimers.removeAll { $0 === timer }
+            guard let window = surface?.window, window.alphaValue < 1 else { return }
+            if !ready || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                window.alphaValue = 1
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.25
+                    window.animator().alphaValue = 1
+                }
+            }
+        }
+        revealTimers.append(timer)
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func setSystemAsleep(_ value: Bool) {
@@ -971,6 +1004,8 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
 
     private func releaseSurfaces() {
         finishTransition()
+        revealTimers.forEach { $0.invalidate() }
+        revealTimers.removeAll()
         surfaces.forEach { $0.close() }
         surfaces.removeAll()
         activeSharedVideoHub?.close()
