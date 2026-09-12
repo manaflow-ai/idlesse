@@ -33,6 +33,7 @@ pids=()
 
 # 1. Decoder
 DECODER_SRCS=(
+  Sources/Shared/ScalingMode.swift
   Sources/Shared/Preferences.swift
   Sources/Shared/DisplayImageDecoder.swift
   Sources/Shared/ImageCanvasView.swift
@@ -121,14 +122,28 @@ if needs_build "build/tests/ambient-sets" "${AMBIENT_SET_SRCS[@]}"; then
   pids+=($!)
 fi
 
-# 9. Named scene variants. Foundation-only coverage exercises package round trips,
-# sparse application, migration, stale-control handling and hard bounds.
+# 9. Named scene variants. Foundation-only coverage for revision-21 persistence,
+# validation, variant application, trigger routing, and legacy upgrade behavior.
 VARIANT_SRCS=(
   Sources/Runtime/Scene.swift
   Tests/VariantTests.swift
 )
 if needs_build "build/tests/variants" "${VARIANT_SRCS[@]}"; then
   xcrun swiftc "$OPT_FLAG" "${VARIANT_SRCS[@]}" -o build/tests/variants &
+  pids+=($!)
+fi
+
+# 10. Finder / Quick Look package validation, external-open routing and hard output bounds.
+# This suite stays GPU-free; the app build separately compiles the real Metal renderer into
+# both application extensions.
+QUICKLOOK_SRCS=(
+  Sources/Runtime/Scene.swift
+  Sources/Runtime/ScenePreviewPolicy.swift
+  Sources/Harness/DocumentOpenRouter.swift
+  Tests/QuickLookTests.swift
+)
+if needs_build "build/tests/quick-look" "${QUICKLOOK_SRCS[@]}"; then
+  xcrun swiftc "$OPT_FLAG" "${QUICKLOOK_SRCS[@]}" -framework CoreGraphics -o build/tests/quick-look &
   pids+=($!)
 fi
 
@@ -147,3 +162,4 @@ build/tests/library
 build/tests/library-grid
 build/tests/ambient-sets
 build/tests/variants
+build/tests/quick-look

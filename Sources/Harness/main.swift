@@ -224,15 +224,24 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     private func route(_ url: URL) {
-        guard url.scheme == "idlesse" else { wallpaper.select(url); return }
-        switch url.host {
-        case "wallpapers": showLibrary()
-        case "screensaver":
-            showLibrary()
-            appSettings.present(tab: 2)
-            showSaverSettings(asSheet: true)
-        case "desktop-icons": comfort.toggleDesktopIcons()
-        default: break
+        switch IdlesseExternalOpenRoute.classify(url) {
+        case .sceneDocument:
+            saverView?.stopAnimation()
+            window?.orderOut(nil)
+            scenePreview.onClose = { [weak self] in self?.showLibrary() }
+            scenePreview.openLibraryScene(url, asCopy: false)
+        case .wallpaperMedia:
+            wallpaper.select(url)
+        case .deepLink:
+            switch url.host {
+            case "wallpapers": showLibrary()
+            case "screensaver":
+                showLibrary()
+                appSettings.present(tab: 2)
+                showSaverSettings(asSheet: true)
+            case "desktop-icons": comfort.toggleDesktopIcons()
+            default: break
+            }
         }
     }
 

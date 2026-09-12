@@ -1,0 +1,14 @@
+{
+  "version": 21,
+  "title": "Preview Time Fixture",
+  "features": [],
+  "capabilities": [],
+  "metadata": {
+    "author": "Mica Fixture",
+    "description": "Representative frame selection fixture",
+    "tags": ["quick-look"],
+    "license": "CC0",
+    "createdWith": "Idlesse Tests",
+    "previewTime": 7.25
+  }
+}

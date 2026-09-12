@@ -17,6 +17,7 @@ TAHOE_DIAG="$HOME/Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSa
 SHARED_SOURCES=(
   "$ROOT/Sources/Runtime/Scene.swift"
   "$ROOT/Sources/Runtime/ImagePreparation.swift"
+  "$ROOT/Sources/Shared/ScalingMode.swift"
   "$ROOT/Sources/Shared/Preferences.swift"
   "$ROOT/Sources/Shared/ImageLibrary.swift"
   "$ROOT/Sources/Shared/DisplayImageDecoder.swift"
@@ -27,6 +28,22 @@ SHARED_SOURCES=(
 SAVER_SOURCES=(
   "$ROOT/Sources/Saver/ConfigureSheetController.swift"
   "$ROOT/Sources/Saver/IdlesseView.swift"
+)
+
+# Minimal reusable renderer slice for Finder/Quick Look. Intentionally excludes
+# wallpaper/UI/preferences, Photos, audio capture, pointer input and networking.
+PREVIEW_RUNTIME_SOURCES=(
+  "$ROOT/Sources/Runtime/Scene.swift"
+  "$ROOT/Sources/Runtime/SceneClock.swift"
+  "$ROOT/Sources/Runtime/SceneRenderer.swift"
+  "$ROOT/Sources/Runtime/ImagePreparation.swift"
+  "$ROOT/Sources/Runtime/GradientRenderer.swift"
+  "$ROOT/Sources/Runtime/MetalSceneRenderer.swift"
+  "$ROOT/Sources/Runtime/ScenePreviewPolicy.swift"
+  "$ROOT/Sources/Runtime/ScenePreviewRuntime.swift"
+  "$ROOT/Sources/Shared/ScalingMode.swift"
+  "$ROOT/Sources/Shared/DisplayImageDecoder.swift"
+  "$ROOT/Sources/Shared/ImageCanvasView.swift"
 )
 
 if [[ "$CONFIG" == "release" ]]; then
@@ -91,13 +108,14 @@ build_saver() {
 }
 
 # Keep the raw swiftc release/fallback path aligned with the SwiftPM app target:
-# every Swift source under Sources belongs to IdlesseApp except DesktopMenu,
-# which is compiled separately as an application extension below.
+# every Swift source under Sources belongs to IdlesseApp except application
+# extension sources, which are compiled into their own sandboxed processes.
 APP_SOURCES=()
 while IFS= read -r source; do
   APP_SOURCES+=( "$source" )
 done < <(find "$ROOT/Sources" -type f -name '*.swift' \
-  ! -path "$ROOT/Sources/DesktopMenu/*" -print | LC_ALL=C sort)
+  ! -path "$ROOT/Sources/DesktopMenu/*" \
+  ! -path "$ROOT/Sources/QuickLook/*" -print | LC_ALL=C sort)
 
 APP_FRAMEWORKS=( AVFoundation ApplicationServices MetalKit Metal IOKit CoreLocation AppKit Photos ScreenSaver UniformTypeIdentifiers Carbon )
 
@@ -136,6 +154,33 @@ compile_app_incremental() {
   return 0
 }
 
+compile_preview_extension() {
+  local arch="$1"
+  local module="$2"
+  local executable="$3"
+  local provider="$4"
+  local framework="$5"
+  local plist="$6"
+  local bundle="$APP/Contents/PlugIns/$executable.appex"
+  local appex_cache="$ROOT/.build/appex-cache"
+  mkdir -p "$bundle/Contents/MacOS" "$appex_cache"
+  local hash
+  hash="$( (xcrun swiftc --version 2>/dev/null | head -n 1; printf '%s' "${SWIFT_OPT[*]}-$arch-$MIN_MACOS-$module"; cat "${PREVIEW_RUNTIME_SOURCES[@]}" "$provider") | shasum -a 256 | cut -d' ' -f1)"
+  if [[ ! -f "$appex_cache/$hash" ]]; then
+    xcrun swiftc -sdk "$SDK" -target "$arch-apple-macosx$MIN_MACOS" \
+      -swift-version 5 "${SWIFT_OPT[@]}" -module-name "$module" \
+      -application-extension -emit-executable -Xlinker -e -Xlinker _NSExtensionMain \
+      "${PREVIEW_RUNTIME_SOURCES[@]}" "$provider" \
+      -framework AppKit -framework AVFoundation -framework MetalKit -framework Metal \
+      -framework CoreVideo -framework CoreText -framework ImageIO -framework IOKit \
+      -framework UniformTypeIdentifiers -framework "$framework" \
+      -o "$appex_cache/$hash"
+  fi
+  cp "$appex_cache/$hash" "$bundle/Contents/MacOS/$executable"
+  cp "$plist" "$bundle/Contents/Info.plist"
+  codesign --force --sign - --entitlements "$ROOT/Sources/QuickLook/Entitlements.plist" "$bundle" >/dev/null
+}
+
 build_app() {
   local arch="$(uname -m)"
   log "Building development preview for $arch"
@@ -169,11 +214,21 @@ build_app() {
       -application-extension -emit-executable -Xlinker -e -Xlinker _NSExtensionMain \
       "$ROOT/Sources/DesktopMenu/FinderSync.swift" -framework AppKit -framework FinderSync \
       -o "$appex_cache/$appex_hash"
-    ls -t "$appex_cache"/* 2>/dev/null | tail -n +6 | xargs rm -f
   fi
   cp "$appex_cache/$appex_hash" "$extension/Contents/MacOS/IdlesseDesktopMenu"
   cp "$ROOT/Sources/DesktopMenu/Info.plist" "$extension/Contents/Info.plist"
   codesign --force --sign - --entitlements "$ROOT/Sources/DesktopMenu/Entitlements.plist" "$extension" >/dev/null
+
+  log "Building Finder thumbnail and Quick Look preview extensions"
+  compile_preview_extension "$arch" IdlesseThumbnail IdlesseThumbnail \
+    "$ROOT/Sources/QuickLook/ThumbnailProvider.swift" QuickLookThumbnailing \
+    "$ROOT/Sources/QuickLook/ThumbnailInfo.plist"
+  compile_preview_extension "$arch" IdlesseQuickLook IdlesseQuickLook \
+    "$ROOT/Sources/QuickLook/PreviewProvider.swift" QuickLookUI \
+    "$ROOT/Sources/QuickLook/PreviewInfo.plist"
+  # Bound cache growth across all three app extensions.
+  ls -t "$appex_cache"/* 2>/dev/null | tail -n +13 | xargs rm -f
+
   local stamp_sha
   stamp_sha="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
   if ! git -C "$ROOT" diff --quiet 2>/dev/null; then stamp_sha="$stamp_sha-dirty"; fi

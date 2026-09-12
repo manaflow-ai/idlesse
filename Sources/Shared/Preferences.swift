@@ -2,20 +2,6 @@ import AppKit
 import Foundation
 import ScreenSaver
 
-enum IdlesseScalingMode: String, CaseIterable, Codable {
-    case fit
-    case fill
-    case actual
-
-    var title: String {
-        switch self {
-        case .fit: return "Fit"
-        case .fill: return "Fill"
-        case .actual: return "Actual Size"
-        }
-    }
-}
-
 enum IdlesseMultiDisplayMode: String, CaseIterable, Codable {
     case same
     case different

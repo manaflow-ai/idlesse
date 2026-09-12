@@ -1,10 +1,10 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// SPIKE: SwiftPM wrapper for true incremental builds. build.sh still owns
-// .app/.saver bundling, code signing, and the FinderSync appex (which needs
+// SwiftPM wrapper for true incremental app builds. build.sh still owns
+// .app/.saver bundling, code signing, and application extensions (which need
 // -application-extension flags SwiftPM cannot express). This package only
-// produces the compiled executables.
+// produces the app executable.
 let package = Package(
     name: "Idlesse",
     platforms: [.macOS(.v14)],
@@ -17,6 +17,7 @@ let package = Package(
             path: "Sources",
             exclude: [
                 "DesktopMenu",
+                "QuickLook",
                 "Harness/Info.plist",
                 "Saver/Info.plist",
             ],

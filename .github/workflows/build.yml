@@ -24,7 +24,7 @@ jobs:
       - name: Smoke-test settings UI
         run: '"build/Idlesse.app/Contents/MacOS/Idlesse" --smoke-options'
 
-      - name: Verify bounded image decoding
+      - name: Verify unit and preview bounds tests
         run: bash test.sh
 
       - name: Verify bundles
@@ -34,3 +34,26 @@ jobs:
           plutil -lint "build/Idlesse.app/Contents/Info.plist"
           codesign --verify --strict "build/Idlesse.saver"
           codesign --verify --strict "build/Idlesse.app"
+
+      - name: Verify Finder and Quick Look extensions
+        run: |
+          set -euo pipefail
+          app="build/Idlesse.app"
+          thumbnail="$app/Contents/PlugIns/IdlesseThumbnail.appex"
+          preview="$app/Contents/PlugIns/IdlesseQuickLook.appex"
+          for bundle in "$thumbnail" "$preview"; do
+            test -x "$bundle/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")"
+            plutil -lint "$bundle/Contents/Info.plist"
+            codesign --verify --strict "$bundle"
+            entitlements="$RUNNER_TEMP/$(basename "$bundle").entitlements.plist"
+            codesign -d --entitlements :- "$bundle" > "$entitlements" 2>/dev/null
+            test "$(plutil -extract com.apple.security.app-sandbox raw "$entitlements")" = "true"
+            test "$(plutil -extract com.apple.security.files.user-selected.read-only raw "$entitlements")" = "true"
+            ! plutil -extract com.apple.security.network.client raw "$entitlements" >/dev/null 2>&1
+          done
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$thumbnail/Contents/Info.plist")" = "com.apple.quicklook.thumbnail"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$preview/Contents/Info.plist")" = "com.apple.quicklook.preview"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionAttributes:QLSupportedContentTypes:0' "$thumbnail/Contents/Info.plist")" = "com.teamleaderleo.idlesse.scene"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionAttributes:QLSupportedContentTypes:0' "$preview/Contents/Info.plist")" = "com.teamleaderleo.idlesse.scene"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionAttributes:QLIsDataBasedPreview' "$preview/Contents/Info.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:LSItemContentTypes:0' "$app/Contents/Info.plist")" = "com.teamleaderleo.idlesse.scene"

@@ -120,27 +120,28 @@ Studio starts a draft without overwriting its source. Source entries with an exp
 `relativePosterPath` use that poster for the small list thumbnail while selected-scene
 preview still renders the actual composition.
 
-Posters are generated only for the selected scene. All compositions are rendered at
-the metadata previewTime (default 2 seconds) with pointer/audio grants off, then their
-GPU resources are released. Video frames are decoded at the same preview time and
-composited with layers, masks, blending, and effects. Authored video-following uses
-scene transport time; ordinary looping video uses elapsed preview time. Studio supplies
-the moving composition. This is a still-preview library rather than a grid of
-continuously playing wallpapers.
+Selected posters use the shared `ScenePreviewRuntime` that also backs Finder thumbnails
+and Quick Look. The runtime resolves the authored preview time (default 2 seconds), keeps
+pointer/audio inputs disabled, prepares video at that same time, renders through the
+production Metal compositor, checks the same output/intermediate-memory bounds, and then
+releases GPU resources. Authored video-following uses scene transport time; ordinary
+looping video uses elapsed preview time. Studio supplies the moving composition. This is
+a still-preview library rather than a grid of continuously playing wallpapers.
 
 The memory cache holds at most four 1024×576 widescreen posters (about 9 MiB pixel data).
 List and grid thumbnails share a separate cache capped at 64 images and 64 MiB. Packages
 prefer a baked preview or decodable package asset. Assetless procedural packages then
-render one 320×180 compositor probe at metadata `previewTime`, covering shader, particle,
-gradient, text, and shape scenes. Thumbnail decoding and probe rendering stay on the
-utility thumbnail queue, release renderer resources after each probe, and leave the
-existing placeholder in place when generation fails. There is no disk thumbnail cache
-or original-media duplication. Renderer working memory uses the existing scene budgets
-during generation. Selecting a scene or reopening Library checks its revision before
-reusing a poster. Packages use bounded JSON and file metadata revisions; raw media uses
-modification time and size. Revision checks run off the main thread. Edits during
-generation discard the result. Refresh Preview forces regeneration. Closing the Library
-cancels its request and clears the image cache.
+use the shared runtime's immediate 320×180 still path at metadata `previewTime`, covering
+shader, particle, gradient, text, and shape scenes without creating a second compositor
+implementation. Thumbnail decoding and probe rendering stay on the utility thumbnail
+queue, release renderer resources after each probe, and leave the existing placeholder
+in place when generation fails. There is no disk thumbnail cache or original-media
+duplication. Renderer working memory uses the existing scene budgets during generation.
+Selecting a scene or reopening Library checks its revision before reusing a poster.
+Packages use bounded JSON and file metadata revisions; raw media uses modification time
+and size. Revision checks run off the main thread. Edits during generation discard the
+result. Refresh Preview forces regeneration. Closing the Library cancels its request and
+clears the image cache.
 
 Cloud-backed individual media or Source descendants may need to download when explicitly
 selected for preview.

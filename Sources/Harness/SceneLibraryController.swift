@@ -596,8 +596,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         ] as CFDictionary)
     }
     /// Fallback for scene packages without a baked preview. Prefer the package's
-    /// own decodable asset, then render one bounded compositor probe for purely
-    /// procedural scenes (shader, particles, gradients, text, and shapes).
+    /// own decodable asset, then use the same bounded compositor session as
+    /// Finder/Quick Look for an assetless procedural still.
     private static func packageAssetThumbnail(_ package: URL) -> CGImage? {
         guard let scene = try? LocalSceneSource.read(package) else { return nil }
         let candidates: [URL] = ([scene.assetURL] + scene.allNodes.map(\.assetURL)).compactMap { $0 }
@@ -612,29 +612,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 }
             }
         }
-        return proceduralThumbnail(scene)
-    }
-    private static func proceduralThumbnail(_ scene: SceneDescriptor) -> CGImage? {
-        let width = 320, height = 180
-        let previewTime = scene.metadata?.previewTime ?? 2
-        do {
-            let clock = SceneClock(now: { 0 })
-            try clock.configure(timeline: scene.timeline)
-            try clock.seek(to: previewTime)
-            let renderer = try MetalSceneRenderer(playable: scene,
-                bounds: NSRect(x: 0, y: 0, width: width, height: height), scale: 1,
-                clock: clock, onError: { _ in })
-            defer { renderer.releaseResources() }
-            let bytes = try renderer.renderFrame(signals: .init(time: clock.time),
-                width: width, height: height, sampleVideo: false)
-            guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
-            return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue).union(.byteOrder32Little),
-                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-        } catch {
-            return nil
-        }
+        return try? ScenePreviewRuntime.renderImmediate(
+            scene: scene,
+            pixelSize: CGSize(width: 320, height: 180)
+        ).image
     }
     private static func appendThumbLine(_ line: String) {
         guard let data = (line + "\n").data(using: .utf8) else { return }
@@ -730,27 +711,14 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 let scene = try await LocalSceneSource().resolve(url)
                 try Task.checkCancellation()
                 guard token == self.generation else { return }
-                let image: NSImage
-                let previewTime = scene.metadata?.previewTime ?? 2
                 let sourceDetails = try await Self.sourceDetails(url)
                 let note = sourceDetails.isEmpty ? (scene.animated ? "Animated scene" : "Scene") : String(sourceDetails.dropFirst(3))
-                let clock = SceneClock(now: { 0 })
-                try clock.configure(timeline: scene.timeline)
-                try clock.seek(to: previewTime)
-                let renderer = try MetalSceneRenderer(playable: scene, bounds: NSRect(x: 0, y: 0, width: 1024, height: 576), scale: 1, clock: clock, onError: { _ in })
-                defer { renderer.releaseResources() }
-                try await renderer.prepareOfflineVideo(at: scene.timeline?.videosFollowScene == true ? clock.time : previewTime,
-                                                       size: CGSize(width: 1024, height: 576))
+                let frame = try await ScenePreviewRuntime.render(
+                    scene: scene,
+                    pixelSize: CGSize(width: 1024, height: 576)
+                )
                 try Task.checkCancellation()
-                let bytes = try renderer.renderFrame(signals: .init(time: clock.time), width: 1024, height: 576, sampleVideo: false)
-                guard let provider = CGDataProvider(data: Data(bytes) as CFData),
-                      let frame = CGImage(width: 1024, height: 576, bitsPerComponent: 8, bitsPerPixel: 32,
-                        bytesPerRow: 4096, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue).union(.byteOrder32Little),
-                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
-                else { throw SceneError.invalid("Could not prepare the Library preview.") }
-                image = NSImage(cgImage: frame, size: NSSize(width: 1024, height: 576))
-                try Task.checkCancellation()
+                let image = NSImage(cgImage: frame.image, size: frame.pixelSize)
                 guard token == self.generation else { return }
                 let after = try await Task.detached(priority: .utility) { try PosterRevision.read(url) }.value
                 try Task.checkCancellation()
