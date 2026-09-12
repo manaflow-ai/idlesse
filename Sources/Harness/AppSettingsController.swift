@@ -103,6 +103,7 @@ final class AppSettingsController: NSWindowController, NSWindowDelegate {
     private let batteryThrottle = NSButton(checkboxWithTitle: "Cap to 30 fps on battery", target: nil, action: nil)
     private let sameDisplays = NSButton(checkboxWithTitle: "Same wallpaper on all displays", target: nil, action: nil)
     private let coveragePause = NSButton(checkboxWithTitle: "Rest fully covered displays", target: nil, action: nil)
+    private let replaceBackdrop = NSButton(checkboxWithTitle: "Replace system wallpaper", target: nil, action: nil)
     private let rate = NSPopUpButton()
     private let transition = NSPopUpButton()
     private let transitionStyle = NSPopUpButton()
@@ -200,7 +201,9 @@ final class AppSettingsController: NSWindowController, NSWindowDelegate {
         sameDisplays.toolTip = "Synchronizes the same wallpaper across all monitors for maximum performance and efficiency."
         coveragePause.target = self; coveragePause.action = #selector(changeCoveragePause)
         coveragePause.toolTip = "Pauses a display's renderer when other windows fully cover it. Off until the estimate proves itself."
-        addTab("Wallpaper", rows: [[label("Frame rate"), rate], [label("Transition"), transitionRow], [liveMenu], [batteryThrottle], [sameDisplays], [coveragePause]])
+        replaceBackdrop.target = self; replaceBackdrop.action = #selector(changeReplaceBackdrop)
+        replaceBackdrop.toolTip = "On: Idlesse sets a matching system still for menu-bar and Show Desktop consistency, restoring yours on stop. Off: your native wallpaper stays untouched and Idlesse renders above it."
+        addTab("Wallpaper", rows: [[label("Frame rate"), rate], [label("Transition"), transitionRow], [liveMenu], [batteryThrottle], [sameDisplays], [coveragePause], [replaceBackdrop]])
         schedule.target = self; schedule.action = #selector(changeBedtime)
         amount.target = self; amount.action = #selector(changeBedtime); amount.isContinuous = true
         amount.setAccessibilityLabel("Dimming")
@@ -307,6 +310,7 @@ final class AppSettingsController: NSWindowController, NSWindowDelegate {
         batteryThrottle.state = SceneFrameRate.throttleOnBattery ? .on : .off
         sameDisplays.state = wallpaper.sameWallpaperOnAllDisplays ? .on : .off
         coveragePause.state = wallpaper.coveragePauseEnabled ? .on : .off
+        replaceBackdrop.state = wallpaper.replacesSystemBackdrop ? .on : .off
         let values = comfort.bedtimeSettings
         schedule.state = values.enabled ? .on : .off
         amount.doubleValue = values.amount * 100
@@ -406,6 +410,9 @@ final class AppSettingsController: NSWindowController, NSWindowDelegate {
     }
     @objc private func changeCoveragePause() {
         wallpaper.coveragePauseEnabled = coveragePause.state == .on
+    }
+    @objc private func changeReplaceBackdrop() {
+        wallpaper.replacesSystemBackdrop = replaceBackdrop.state == .on
     }
     @objc private func mirrorWallpaperToSaver() {
         guard let url = wallpaper.selectedURL else {

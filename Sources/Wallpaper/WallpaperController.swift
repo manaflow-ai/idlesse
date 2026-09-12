@@ -734,6 +734,29 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         }
     }
 
+    /// Take-over vs on-top: when true (the default) Idlesse sets a matching
+    /// system still so the menu bar and Show Desktop blend in, and restores
+    /// the original wallpaper on stop. When false the native wallpaper is
+    /// never touched and Idlesse simply renders above it.
+    var replacesSystemBackdrop: Bool {
+        get {
+            UserDefaults.standard.object(forKey: "wallpaperReplaceSystemBackdrop") == nil
+                ? true : UserDefaults.standard.bool(forKey: "wallpaperReplaceSystemBackdrop")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "wallpaperReplaceSystemBackdrop")
+            if newValue {
+                if let scene = playable, let url = selectedURL {
+                    syncSystemBackdrop(scene: scene, sourceURL: url, request: generation)
+                }
+            } else {
+                backdropTask?.cancel()
+                backdropTask = nil
+                restoreOriginalBackdrops()
+            }
+            updateMenu()
+        }
+    }
     /// Remember the user's plain wallpaper once per display, before our stills
     /// replace it. Never records one of our own stills as the original.
     private func rememberOriginalBackdrop(for screen: NSScreen) {
@@ -765,7 +788,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     /// A full-resolution SDR still gives macOS matching material for menu-bar/Show Desktop
     /// regions it composites from the system wallpaper rather than our window.
     private func syncSystemBackdrop(scene: SceneDescriptor, sourceURL: URL, request: Int) {
-        guard persistsSelection && presentsWindows else { return }
+        guard persistsSelection && presentsWindows && replacesSystemBackdrop else { return }
         backdropTask?.cancel()
         backdropTask = Task { @MainActor [weak self] in
             guard let self else { return }
