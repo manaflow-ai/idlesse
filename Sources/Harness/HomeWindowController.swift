@@ -64,6 +64,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private let nowPlayingButton = NSButton(title: "No Wallpaper", target: nil, action: nil)
     private let destinationLabel = NSTextField(labelWithString: "")
     private let previousButton = NSButton(frame: .zero)
+    private let playerArtwork = NSImageView()
+    private let playerSound = NSButton(frame: .zero)
     private let pauseButton = NSButton(frame: .zero)
     private let nextButton = NSButton(frame: .zero)
     private var nowPlayingPopover: NSPopover?
@@ -533,8 +535,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         guard itemIdentifier == Self.nowPlayingItem else { return nil }
         nowPlayingButton.isBordered = false
         nowPlayingButton.target = self
-        nowPlayingButton.action = #selector(showNowPlaying)
-        nowPlayingButton.imagePosition = .imageLeading
+        nowPlayingButton.action = nil
+        nowPlayingButton.imagePosition = .noImage
         nowPlayingButton.alignment = .left
         nowPlayingButton.toolTip = "Current wallpaper and playback options"
         nowPlayingButton.font = .systemFont(ofSize: 13, weight: .medium)
@@ -547,15 +549,30 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
-        nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        labels.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        nowPlayingButton.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        labels.widthAnchor.constraint(equalToConstant: 154).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
-        let controls = NSStackView(views: [labels, previousButton, pauseButton, nextButton])
+        configureTransport(playerSound, symbol: "speaker.slash", label: "Wallpaper sound", action: #selector(togglePlayerSound))
+        playerArtwork.imageScaling = .scaleProportionallyUpOrDown
+        playerArtwork.wantsLayer = true
+        playerArtwork.layer?.cornerRadius = 6
+        playerArtwork.layer?.masksToBounds = true
+        playerArtwork.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        playerArtwork.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
+        transport.spacing = 0
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        let controls = NSStackView(views: [playerArtwork, labels, transport, divider, playerSound])
         controls.spacing = 10
         controls.alignment = .centerY
+        controls.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 8)
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.isBordered = false
         item.view = controls
         item.label = "Now Playing"
         item.paletteLabel = "Now Playing"
@@ -571,6 +588,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         button.target = self
         button.action = action
         button.toolTip = label
+    }
+
+    @objc private func togglePlayerSound() {
+        wallpaper.soundEnabled.toggle()
+        refreshState()
     }
 
     @objc private func previousWallpaper() { library.cycle(delta: -1, from: wallpaper.selectedURL); refreshState() }
@@ -700,16 +722,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             if let url {
                 library.requestPlaybackArtwork(url) { [weak self] image in
                     guard let self, self.cachedThumbnailURL == url.standardizedFileURL else { return }
-                    let artwork = NSImage(size: NSSize(width: 40, height: 24))
+                    let artwork = NSImage(size: NSSize(width: 60, height: 34))
                     artwork.lockFocus()
-                    image.draw(in: NSRect(x: 0, y: 0, width: 40, height: 24))
+                    image.draw(in: NSRect(x: 0, y: 0, width: 60, height: 34))
                     artwork.unlockFocus()
                     self.cachedThumbnail = artwork
-                    self.nowPlayingButton.image = artwork
+                    self.playerArtwork.image = artwork
                 }
             }
         }
-        nowPlayingButton.image = cachedThumbnail
+        playerArtwork.image = cachedThumbnail
         pauseButton.image = NSImage(systemSymbolName: wallpaper.pausedByUser ? "play.fill" : "pause.fill",
             accessibilityDescription: wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper")
         pauseButton.toolTip = wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper"
@@ -723,7 +745,14 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if wallpaper.isLoading { parts.insert("Loading…", at: 0) }
         if let rotation = rotationSummary() { parts.append(rotation) }
         destinationLabel.stringValue = parts.joined(separator: " · ")
-        destinationLabel.isHidden = parts.isEmpty
+        if parts.isEmpty {
+            destinationLabel.stringValue = url == nil ? "Choose a wallpaper" : (wallpaper.pausedByUser ? "Paused" : "On Desktop")
+        }
+        destinationLabel.isHidden = false
+        playerSound.image = NSImage(systemSymbolName: wallpaper.soundEnabled ? "speaker.wave.2" : "speaker.slash", accessibilityDescription: "Wallpaper sound")
+        playerSound.isEnabled = wallpaper.hasVideoContent
+        playerSound.toolTip = wallpaper.soundEnabled ? "Mute wallpaper" : "Unmute wallpaper"
+        playerSound.setAccessibilityLabel(playerSound.toolTip)
         refreshPlaybackPopover?()
         refreshDisplaysSummary()
     }
