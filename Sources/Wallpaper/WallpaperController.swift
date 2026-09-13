@@ -114,8 +114,6 @@ final class WallpaperSurface {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 self.renderer.view.layer?.opacity = 1
-                self.window.isOpaque = true
-                self.window.backgroundColor = .black
                 CATransaction.commit()
             }
         }
@@ -301,7 +299,8 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     }
 
     func displayURL(for displayID: UInt32) -> URL? {
-        explicitDisplayURL(for: displayID) ?? selectedURL
+        if sameWallpaperOnAllDisplays || desktopSpanActive { return selectedURL }
+        return explicitDisplayURL(for: displayID) ?? selectedURL
     }
 
     /// Whether any display is playing `media`, directly or as a display override.
@@ -1453,6 +1452,15 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             precondition(controller.surfaces.allSatisfy { $0.videoHub === hub }, "Identical videos must join the existing decoder")
             precondition(controller.activeSharedVideoHub === hub, "Joining a synchronized group must retain its transport")
         }
+        let sharedSelection = imageURL.deletingLastPathComponent().appendingPathComponent("shared-selection-check.mp4")
+        controller.selectedURL = sharedSelection
+        defaults.set(true, forKey: Self.sameDisplaysKey)
+        precondition(controller.displayURL(for: target.displayID) == sharedSelection,
+                     "Shared mode must report the active wallpaper, not a saved per-display override")
+        defaults.set(false, forKey: Self.sameDisplaysKey)
+        precondition(controller.displayURL(for: target.displayID)?.standardizedFileURL == imageURL.standardizedFileURL,
+                     "Per-display mode must preserve the saved assignment")
+        controller.selectedURL = imageURL
         print("Targeted assignment passed: one surface replaced; \(untouched.count) unchanged display renderer(s) retained")
     }
 
@@ -1878,8 +1886,6 @@ private final class MenuBarStrip {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 self?.layer.opacity = 1
-                self?.window.isOpaque = true
-                self?.window.backgroundColor = .black
                 CATransaction.commit()
             }
         }
