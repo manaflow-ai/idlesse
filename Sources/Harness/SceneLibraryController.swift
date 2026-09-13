@@ -292,7 +292,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         guard let root = window?.contentView else { return }
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        thumbnails.totalCostLimit = 64 * 1024 * 1024
+        // Keep a typical personal library resident while retaining a byte ceiling.
+        // 130 decoded 320×180 posters occupy about 29 MiB.
+        thumbnails.countLimit = 256
+        thumbnails.totalCostLimit = 96 * 1024 * 1024
         search.placeholderString = ""
         search.setAccessibilityLabel("Search wallpapers")
         search.delegate = self
@@ -812,7 +815,6 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
 
     func requestThumbnail(for item: Item, completion: @escaping (NSImage) -> Void) {
-        thumbnails.countLimit = 64
         let revision = thumbnailRevisions[item.id, default: 0]
         let requestID = revision == 0 ? item.id : "\(item.id)|\(revision)"
         if pendingThumbnails[requestID] != nil {
