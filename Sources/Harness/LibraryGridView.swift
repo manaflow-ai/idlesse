@@ -105,13 +105,24 @@ final class LibraryGridView: NSView {
         super.draw(dirtyRect)
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
         for card in activeCards.values {
-            for (index, tint) in card.artworkLights.enumerated() {
-                let center = NSPoint(x: card.frame.minX + card.frame.width * (CGFloat(index) + 0.5) / 3,
-                                     y: card.frame.minY + card.frame.width * 0.48)
-                let radius = card.frame.width * 0.38
-                NSGradient(colorsAndLocations: (tint.withAlphaComponent(0.64), 0),
-                    (tint.withAlphaComponent(0.34), 0.48), (tint.withAlphaComponent(0), 1))?.draw(
-                    fromCenter: center, radius: 0, toCenter: center, radius: radius, options: [])
+            guard !card.artworkLights.isEmpty else { continue }
+            let artwork = convert(card.thumbnailView.bounds, from: card.thumbnailView)
+            let spread: CGFloat = 24
+            // Feather outward from the artwork silhouette, rather than drawing
+            // separate radial lights that remain visible as overlapping circles.
+            for step in 0..<24 {
+                let distance = CGFloat(step)
+                let falloff = pow(1 - distance / spread, 2)
+                let outer = artwork.insetBy(dx: -distance - 1, dy: -distance - 1)
+                let inner = artwork.insetBy(dx: -distance, dy: -distance)
+                let ring = NSBezierPath(roundedRect: outer, xRadius: 8 + distance + 1, yRadius: 8 + distance + 1)
+                ring.append(NSBezierPath(roundedRect: inner, xRadius: 8 + distance, yRadius: 8 + distance))
+                ring.windingRule = .evenOdd
+                NSGraphicsContext.saveGraphicsState()
+                ring.addClip()
+                NSGradient(colors: card.artworkLights.map { $0.withAlphaComponent(0.22 * falloff) })?
+                    .draw(in: outer, angle: 0)
+                NSGraphicsContext.restoreGraphicsState()
             }
         }
     }
