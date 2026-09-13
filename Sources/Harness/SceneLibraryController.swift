@@ -297,7 +297,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private func setup() {
         guard let root = window?.contentView else { return }
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        root.layer?.backgroundColor = LibrarySurfaceColors.content.cgColor
         // Keep a typical personal library resident while retaining a byte ceiling.
         // 130 decoded 320×180 posters occupy about 29 MiB.
         thumbnails.countLimit = 256
@@ -481,6 +481,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         right.orientation = .vertical
         right.alignment = .leading
         right.spacing = 12
+        browserSplit.splitView = LibrarySplitView()
         let browser = NSView()
         let browserController = NSViewController()
         browserController.view = browser
@@ -489,7 +490,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let inspectorController = NSViewController()
         let inspector = NSView()
         inspector.wantsLayer = true
-        inspector.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        inspector.layer?.backgroundColor = LibrarySurfaceColors.content.cgColor
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300

@@ -179,7 +179,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let sidebarRoot = NSView()
         sidebarController.view = sidebarRoot
         sidebarRoot.wantsLayer = true
-        sidebarRoot.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
+        sidebarRoot.layer?.backgroundColor = LibrarySurfaceColors.sidebar.cgColor
         let settings = NSButton(title: "Settings…", target: self, action: #selector(openPreferences))
         settings.bezelStyle = .inline
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
@@ -216,6 +216,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         contentItem.minimumThickness = 700
 
         let split = NSSplitViewController()
+        split.splitView = LibrarySplitView()
+        split.splitView.isVertical = true
         navigationSplit = split.splitView
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(contentItem)
@@ -928,4 +930,19 @@ private final class WallpaperHeaderArtwork: NSView {
                             NSColor.windowBackgroundColor.withAlphaComponent(0.62),
                             NSColor.windowBackgroundColor.withAlphaComponent(0.40)])?.draw(in: bounds, angle: 0)
     }
+}
+
+/// The navigation and content surfaces have distinct luminance, without black seams.
+enum LibrarySurfaceColors {
+    static let sidebar = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.15, alpha: 1) : NSColor(white: 0.94, alpha: 1)
+    }
+    static let content = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.085, alpha: 1) : NSColor(white: 1, alpha: 1)
+    }
+}
+final class LibrarySplitView: NSSplitView {
+    override var dividerColor: NSColor { .labelColor.withAlphaComponent(0.07) }
 }
