@@ -195,6 +195,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebarItem.minimumThickness = 180
         sidebarItem.maximumThickness = 260
         sidebarItem.canCollapse = true
+        sidebarItem.allowsFullHeightLayout = true
         self.sidebarItem = sidebarItem
         sidebarItem.isCollapsed = UserDefaults.standard.bool(forKey: "Idlesse.home.sidebarHidden")
 
@@ -225,7 +226,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     private func refreshSidebar() {
         var next: [SidebarRow] = [
-            .group("Wallpapers"), .library, .favorites, .recent,
+            .library, .favorites, .recent,
             .group("Collections"),
         ]
         if let store = try? SceneLibraryStore(file: indexURL) {
@@ -461,15 +462,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         toolbar.autosavesConfiguration = false
         window.toolbar = toolbar
         window.toolbarStyle = .unified
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.searchItem, Self.importItem, Self.settingsItem]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.searchItem, Self.importItem, Self.settingsItem]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -627,7 +629,15 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let url = wallpaper.selectedURL
         library.updatePlayingURL(url)
         let title = wallpaper.currentSceneTitle ?? url.map { SceneLibraryController.displayTitle($0.deletingPathExtension().lastPathComponent) } ?? "No Wallpaper"
-        nowPlayingButton.title = title
+        let screens = NSScreen.screens.sorted { $0.frame.minX < $1.frame.minX }
+        let assignments = screens.map { screen -> String in
+            let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
+            return wallpaper.displayURL(for: id).map {
+                SceneLibraryController.displayTitle($0.deletingPathExtension().lastPathComponent)
+            } ?? "None"
+        }
+        nowPlayingButton.title = wallpaper.sameWallpaperOnAllDisplays ? title : assignments.joined(separator: " | ")
+        nowPlayingButton.toolTip = wallpaper.sameWallpaperOnAllDisplays ? "Shared wallpaper · playback options" : zip(screens, assignments).map { "\($0.0.localizedName): \($0.1)" }.joined(separator: "\n")
         let standardized = url?.standardizedFileURL
         if standardized != cachedThumbnailURL {
             cachedThumbnailURL = standardized
@@ -643,11 +653,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         nextButton.isEnabled = library.hasCycleCandidates
         previousButton.toolTip = library.hasCycleCandidates ? "Previous wallpaper in the current Library view" : "Open a Library view with at least two wallpapers"
         nextButton.toolTip = library.hasCycleCandidates ? "Next wallpaper in the current Library view" : "Open a Library view with at least two wallpapers"
-        let count = NSScreen.screens.count
-        var parts = [wallpaper.sameWallpaperOnAllDisplays ? "All Displays" : "\(count) display\(count == 1 ? "" : "s") · Per Display"]
+        var parts: [String] = []
         if wallpaper.isLoading { parts.insert("Loading…", at: 0) }
         if let rotation = rotationSummary() { parts.append(rotation) }
         destinationLabel.stringValue = parts.joined(separator: " · ")
+        destinationLabel.isHidden = parts.isEmpty
         refreshPlaybackPopover?()
         refreshDisplaysSummary()
     }

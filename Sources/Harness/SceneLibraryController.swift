@@ -334,7 +334,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         inspectorButton.toolTip = inspectorButton.state == .on ? "Hide Inspector" : "Show Inspector"
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let toolbar = NSStackView(views: [search, filter, mediaFilter, sort, spacer, viewModeControl, inspectorButton, libraryActions, importButton])
+        let toolbar = NSStackView(views: [search, filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
         toolbar.spacing = 10
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
         column.width = 280
@@ -434,13 +434,14 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let browserController = NSViewController()
         browserController.view = browser
         let browserItem = NSSplitViewItem(viewController: browserController)
-        browserItem.minimumThickness = 240
+        browserItem.minimumThickness = 420
         let inspectorController = NSViewController()
         let inspector = NSView()
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300
-        pane.maximumThickness = 600
+        pane.maximumThickness = 380
+        pane.preferredThicknessFraction = 0.32
         pane.canCollapse = true
         inspectorItem = pane
         browserSplit.addSplitViewItem(browserItem)
@@ -480,7 +481,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         browserBottom = browserSplit.view.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         browserBottom?.isActive = true
         NSLayoutConstraint.activate([
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 12),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             search.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
@@ -663,8 +664,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             }
         }
         let activeCollection = store.catalog.collections.first { $0.id == (filter.selectedItem?.representedObject as? String) }
+        let oldIDs = items.map(\.id)
         let catalog = allItems()
-        let query = search.stringValue
+        let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        sort.isEnabled = query.isEmpty && activeCollection == nil && scope != .recent
+        sort.toolTip = !query.isEmpty ? "Search results are ordered by relevance" : (activeCollection != nil ? "Collection order" : "Sort wallpapers")
         let scores: [String: Double] = query.isEmpty ? [:] : catalog.reduce(into: [:]) { scores, item in
             scores[item.id] = Self.fuzzyScore(query: query, in: item.title)
         }
@@ -709,7 +713,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 let a = store.catalog.recent[$0.id] ?? .distantPast, b = store.catalog.recent[$1.id] ?? .distantPast
                 if a != b { return a > b }
             }
-            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            let order = $0.title.localizedStandardCompare($1.title)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
         }
         table.reloadData()
         gridView.update(items: items, selectedID: selected?.id)
@@ -719,8 +724,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             gridView.select(id: selected?.id)
             preview()
-            table.scrollRowToVisible(index)
-            if !gridScroll.isHidden { gridView.revealSelection() }
+            if oldIDs != items.map(\.id) {
+                table.scrollRowToVisible(index)
+                if !gridScroll.isHidden { gridView.revealSelection() }
+            }
         } else {
             table.deselectAll(nil)
             selected = nil
