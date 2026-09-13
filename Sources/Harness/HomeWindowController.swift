@@ -336,7 +336,38 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         }
     }
 
+    private var navigationHistory: [SidebarRow] = []
+    private var historyIndex = -1
+    private var restoringHistory = false
+    private let backNavigation = LibraryHoverButton(frame: .zero)
+    private let forwardNavigation = LibraryHoverButton(frame: .zero)
+
+    @objc private func navigateBack() { navigateHistory(-1) }
+    @objc private func navigateForward() { navigateHistory(1) }
+    private func navigateHistory(_ delta: Int) {
+        let next = historyIndex + delta
+        guard navigationHistory.indices.contains(next) else { return }
+        historyIndex = next
+        restoringHistory = true
+        let row = navigationHistory[next]
+        if let index = rows.firstIndex(of: row) {
+            sidebar.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            showLibraryScope(row)
+        }
+        restoringHistory = false
+        updateHistoryButtons()
+    }
+    private func updateHistoryButtons() {
+        backNavigation.isEnabled = historyIndex > 0
+        forwardNavigation.isEnabled = historyIndex + 1 < navigationHistory.count
+    }
     private func showLibraryScope(_ row: SidebarRow) {
+        if !restoringHistory && (historyIndex < 0 || navigationHistory[historyIndex] != row) {
+            navigationHistory = Array(navigationHistory.prefix(historyIndex + 1))
+            navigationHistory.append(row)
+            historyIndex = navigationHistory.count - 1
+        }
+        updateHistoryButtons()
         library.setSearchEnabled(true)
         currentRow = row
         libraryView.isHidden = false
@@ -501,11 +532,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, Self.searchItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, Self.searchItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -523,7 +554,13 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let button = LibraryHoverButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!, target: self, action: #selector(toggleSidebar))
             button.isBordered = false
-            item.view = button
+            configureTransport(backNavigation, symbol: "arrow.left", label: "Back", action: #selector(navigateBack))
+            configureTransport(forwardNavigation, symbol: "arrow.right", label: "Forward", action: #selector(navigateForward))
+            updateHistoryButtons()
+            let navigation = NSStackView(views: [button, backNavigation, forwardNavigation])
+            navigation.alignment = .centerY
+            navigation.spacing = 2
+            item.view = navigation
             item.label = "Sidebar"
             item.target = self
             item.action = #selector(toggleSidebar)
@@ -571,11 +608,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         destinationLabel.textColor = .secondaryLabelColor
         destinationLabel.lineBreakMode = .byTruncatingTail
 
-        let labels = NSStackView(views: [nowPlayingButton, destinationLabel])
+        let labels = NSStackView(views: [nowPlayingButton])
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
-        nowPlayingButton.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         labels.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))

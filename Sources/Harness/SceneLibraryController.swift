@@ -28,10 +28,22 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
 
     /// Home owns the toolbar, while Library retains the search query and import actions.
     func makeSearchToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        if let stack = search.superview as? NSStackView { stack.removeArrangedSubview(search) }
+        if let stack = search.superview as? NSStackView { stack.removeArrangedSubview(search); stack.isHidden = true }
         search.removeFromSuperview()
-        let item = NSSearchToolbarItem(itemIdentifier: identifier)
-        item.searchField = search
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        let host = NSView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+        search.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(search)
+        NSLayoutConstraint.activate([
+            host.widthAnchor.constraint(equalToConstant: 300),
+            host.heightAnchor.constraint(equalToConstant: 28),
+            search.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            search.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            search.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+            search.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        item.view = host
         item.label = "Search Wallpapers"
         item.toolTip = "Search the current Library selection"
         return item
@@ -377,15 +389,15 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         importButton.toolTip = "Add wallpapers…"
         importButton.setAccessibilityLabel("Add wallpapers")
         importButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        let searchRow = NSStackView(views: [search, importButton])
+        let searchRow = NSStackView(views: [search])
         searchRow.spacing = 12
-        let browsingRow = NSStackView(views: [filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer])
+        let browsingRow = NSStackView(views: [filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
         browsingRow.spacing = 10
-        let toolbar = NSStackView(views: [searchRow, browsingRow])
+        let toolbar = NSStackView(views: homeNavigation ? [browsingRow] : [searchRow, browsingRow])
         toolbar.orientation = .vertical
         toolbar.alignment = .leading
         toolbar.spacing = 6
-        searchRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
+        if !homeNavigation { searchRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true }
         browsingRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
         column.width = 280
