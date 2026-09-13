@@ -89,7 +89,17 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var inspectorItem: NSSplitViewItem?
     private let store: SceneLibraryStore
     private let table = NSTableView()
-    private let search = NSSearchField()
+    private let search: NSSearchField = {
+        let field = NSSearchField()
+        field.cell = CenteredLibrarySearchCell(textCell: "")
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.drawsBackground = true
+        field.font = .systemFont(ofSize: 13)
+        return field
+    }()
     private var pendingSearch: DispatchWorkItem?
     private let filter = NSPopUpButton()
     private let sort = NSPopUpButton()
@@ -2101,5 +2111,18 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         }
         controller.window?.close()
         print("Library UI checks passed: built-in poster/color, favorites, search, source controls, draft routing, procedural thumbnails\(videoURL == nil ? "" : ", composed video poster"); offscreen snapshot saved")
+    }
+}
+
+private final class CenteredLibrarySearchCell: NSSearchFieldCell {
+    override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+        var button = super.searchButtonRect(forBounds: rect)
+        button.origin.y = rect.midY - button.height / 2
+        return button
+    }
+    override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
+        var button = super.cancelButtonRect(forBounds: rect)
+        button.origin.y = rect.midY - button.height / 2
+        return button
     }
 }

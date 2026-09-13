@@ -487,6 +487,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         toolbar.autosavesConfiguration = false
         window.toolbar = toolbar
         window.toolbarStyle = .unifiedCompact
+        window.titlebarSeparatorStyle = .none
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = LibrarySurfaceColors.content
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
     }
@@ -535,7 +538,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
             pauseButton.wantsLayer = true
         pauseButton.layer?.cornerRadius = 8
-        pauseButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        pauseButton.layer?.backgroundColor = NSColor.clear.cgColor
         for button in [previousButton, pauseButton, nextButton] { button.contentTintColor = .white }
         let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
             transport.spacing = 4
@@ -580,7 +583,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         playerArtwork.heightAnchor.constraint(equalToConstant: 32).isActive = true
         pauseButton.wantsLayer = true
         pauseButton.layer?.cornerRadius = 8
-        pauseButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        pauseButton.layer?.backgroundColor = NSColor.clear.cgColor
         for button in [previousButton, pauseButton, nextButton] { button.contentTintColor = .white }
         let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
         transport.spacing = 0
@@ -588,7 +591,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         divider.boxType = .separator
         divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
         divider.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        let controls = NSStackView(views: [playerArtwork, labels, transport, playerSound])
+        let controls = NSStackView(views: [labels, transport, playerSound])
         controls.spacing = 10
         controls.alignment = .centerY
         controls.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 8)
@@ -944,5 +947,6 @@ enum LibrarySurfaceColors {
     }
 }
 final class LibrarySplitView: NSSplitView {
-    override var dividerColor: NSColor { .labelColor.withAlphaComponent(0.07) }
+    override var dividerColor: NSColor { .clear }
+    override func drawDivider(in rect: NSRect) {}
 }
