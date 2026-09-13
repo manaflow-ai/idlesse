@@ -5,7 +5,7 @@ import ImageIO
 import CoreImage
 
 /// Native reference library with one on-demand poster, never a grid of live renderers.
-final class SceneLibraryController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate {
+final class SceneLibraryController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate, NSMenuDelegate {
     struct Item {
         let id: String
         let title: String
@@ -79,7 +79,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         }
         reload(selecting: changed ? selectionByScope[scope] : nil)
     }
-    private let inspectorButton = NSButton(checkboxWithTitle: "Inspector", target: nil, action: nil)
+    private let inspectorButton = NSButton(frame: .zero)
+    private let libraryActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let browserSplit = NSSplitViewController()
     private var inspectorItem: NSSplitViewItem?
     private let store: SceneLibraryStore
@@ -311,10 +312,29 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         mediaFilter.isHidden = true
         mediaFilter.target = self
         mediaFilter.action = #selector(mediaFilterChanged)
+        viewModeControl.setLabel("", forSegment: 0)
+        viewModeControl.setLabel("", forSegment: 1)
+        viewModeControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List"), forSegment: 0)
+        viewModeControl.setImage(NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Grid"), forSegment: 1)
+        viewModeControl.setToolTip("List view", forSegment: 0)
+        viewModeControl.setToolTip("Gallery view", forSegment: 1)
+        inspectorButton.setButtonType(.pushOnPushOff)
+        inspectorButton.bezelStyle = .texturedRounded
+        inspectorButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Inspector")
+        inspectorButton.imagePosition = .imageOnly
+        inspectorButton.setAccessibilityLabel("Inspector")
+        libraryActions.addItem(withTitle: "")
+        libraryActions.item(at: 0)?.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Library actions")
+        libraryActions.toolTip = "Collections and sources"
+        libraryActions.setAccessibilityLabel("Library actions")
+        libraryActions.menu?.delegate = self
         inspectorButton.target = self
         inspectorButton.action = #selector(toggleInspector)
         inspectorButton.state = UserDefaults.standard.object(forKey: "Idlesse.library.inspectorVisible") as? Bool == false ? .off : .on
-        let toolbar = NSStackView(views: [search, filter, mediaFilter, sort, viewModeControl, inspectorButton, collectionActions, sourceActions, importButton])
+        inspectorButton.toolTip = inspectorButton.state == .on ? "Hide Inspector" : "Show Inspector"
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let toolbar = NSStackView(views: [search, filter, mediaFilter, sort, spacer, viewModeControl, inspectorButton, libraryActions, importButton])
         toolbar.spacing = 10
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
         column.width = 280
@@ -500,6 +520,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
 
     @objc private func toggleInspector() {
         let visible = inspectorButton.state == .on
+        inspectorButton.toolTip = visible ? "Hide Inspector" : "Show Inspector"
         inspectorItem?.isCollapsed = !visible
         if !visible { stopLivePreview() }
         UserDefaults.standard.set(visible, forKey: "Idlesse.library.inspectorVisible")
@@ -1411,6 +1432,40 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         preview()
         act(editing: false)
     }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === libraryActions.menu else { return }
+        while menu.numberOfItems > 1 { menu.removeItem(at: 1) }
+        for (title, source, action) in [
+            ("Collections", collectionActions, #selector(performCollectionMenuAction(_:))),
+            ("Sources", sourceActions, #selector(performSourceMenuAction(_:)))
+        ] {
+            let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: title)
+            submenu.autoenablesItems = false
+            for (index, original) in source.itemArray.enumerated() where index > 0 {
+                let item = NSMenuItem(title: original.title, action: action, keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                item.isEnabled = original.isEnabled
+                submenu.addItem(item)
+            }
+            parent.submenu = submenu
+            menu.addItem(parent)
+        }
+    }
+
+    @objc private func performCollectionMenuAction(_ item: NSMenuItem) {
+        guard collectionActions.itemArray.indices.contains(item.tag) else { return }
+        collectionActions.selectItem(at: item.tag)
+        collectionAction()
+    }
+
+    @objc private func performSourceMenuAction(_ item: NSMenuItem) {
+        guard sourceActions.itemArray.indices.contains(item.tag) else { return }
+        sourceActions.selectItem(at: item.tag)
+        sourceAction()
+    }
+
     func createCollection() {
         collectionActions.selectItem(withTitle: "New Collection…")
         collectionAction()
