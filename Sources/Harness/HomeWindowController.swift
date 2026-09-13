@@ -900,14 +900,14 @@ private final class LibraryNavigationRow: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
         guard hovered, !isSelected else { return }
-        NSColor.systemPurple.withAlphaComponent(0.12).setFill()
+        NSColor.labelColor.withAlphaComponent(0.07).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
     }
 
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor.systemPurple.withAlphaComponent(isEmphasized ? 0.24 : 0.14).setFill()
+        NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.14 : 0.09).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
     }
 }

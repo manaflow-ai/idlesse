@@ -297,7 +297,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private func setup() {
         guard let root = window?.contentView else { return }
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        root.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         // Keep a typical personal library resident while retaining a byte ceiling.
         // 130 decoded 320×180 posters occupy about 29 MiB.
         thumbnails.countLimit = 256
@@ -322,7 +322,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         sourceActions.addItem(withTitle: "Sources…")
         sourceActions.target = self
         sourceActions.action = #selector(sourceAction)
-        viewModeControl.selectedSegmentBezelColor = NSColor.systemPurple
+        viewModeControl.selectedSegmentBezelColor = NSColor.controlColor
         viewModeControl.target = self
         viewModeControl.action = #selector(viewModeChanged)
         viewModeControl.selectedSegment = (UserDefaults.standard.object(forKey: "Idlesse.library.viewMode") as? Int) ?? 1
@@ -489,7 +489,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let inspectorController = NSViewController()
         let inspector = NSView()
         inspector.wantsLayer = true
-        inspector.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        inspector.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300
