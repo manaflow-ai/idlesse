@@ -275,7 +275,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             text.textColor = .secondaryLabelColor
             if entry == .group("Collections") {
                 let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Collection")!, target: self, action: #selector(newCollection))
-                add.bezelStyle = .inline
+                add.isBordered = false
+                add.widthAnchor.constraint(equalToConstant: 24).isActive = true
+                add.heightAnchor.constraint(equalToConstant: 24).isActive = true
                 add.toolTip = "New Collection"
                 let spacer = NSView()
                 spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -546,12 +548,12 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.alignment = .leading
         labels.spacing = 0
         nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        labels.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        labels.widthAnchor.constraint(equalToConstant: 200).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
-        let controls = NSStackView(views: [labels, previousButton, pauseButton, nextButton])
-        controls.spacing = 7
+        let controls = NSStackView(views: [previousButton, pauseButton, nextButton, labels])
+        controls.spacing = 10
         controls.alignment = .centerY
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = controls

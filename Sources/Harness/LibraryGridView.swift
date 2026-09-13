@@ -30,7 +30,7 @@ struct LibraryGridLayoutPlan {
         let availableWidth = max(1, self.contentWidth - (padding * 2))
         columns = max(1, Int((availableWidth + spacing) / (minCardWidth + spacing)))
         cardWidth = (availableWidth - (CGFloat(columns - 1) * spacing)) / CGFloat(columns)
-        cardHeight = cardWidth * 9.0 / 16.0 + 44
+        cardHeight = cardWidth * 9.0 / 16.0 + 28
         rowStride = cardHeight + spacing
         rowCount = self.itemCount == 0 ? 0 : (self.itemCount + columns - 1) / columns
         if rowCount == 0 {
@@ -326,7 +326,7 @@ final class LibraryCardView: NSView {
 
         badgeLabel.font = .systemFont(ofSize: 10, weight: .regular)
         badgeLabel.textColor = .secondaryLabelColor
-        addSubview(badgeLabel)
+        badgeLabel.isHidden = true
         updateBorder()
     }
 

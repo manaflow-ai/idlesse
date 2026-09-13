@@ -293,7 +293,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         thumbnails.totalCostLimit = 64 * 1024 * 1024
-        search.placeholderString = "Search wallpapers"
+        search.placeholderString = ""
+        search.setAccessibilityLabel("Search wallpapers")
         search.delegate = self
         search.target = self
         search.action = #selector(commitSearch)
@@ -341,6 +342,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         inspectorButton.toolTip = inspectorButton.state == .on ? "Hide Inspector" : "Show Inspector"
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        importButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add wallpapers")
+        importButton.imagePosition = .imageOnly
+        importButton.isBordered = false
+        importButton.toolTip = "Add wallpapers…"
+        importButton.setAccessibilityLabel("Add wallpapers")
+        importButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         let searchRow = NSStackView(views: [search, importButton])
         searchRow.spacing = 12
         let browsingRow = NSStackView(views: [filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer])
@@ -433,18 +440,27 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         desktopStatus.textColor = .secondaryLabelColor
         desktopStatus.font = .systemFont(ofSize: 12, weight: .medium)
         desktopStatus.isHidden = true
-        let playbackActions = NSStackView(views: [desktopStatus, apply, livePreviewButton])
+        livePreviewButton.isBordered = false
+        livePreviewButton.image = NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "Preview")
+        livePreviewButton.imagePosition = .imageLeading
+        let playbackActions = NSStackView(views: [livePreviewButton, NSView(), desktopStatus, apply])
         playbackActions.spacing = 8
-        let editingActions = NSStackView(views: [adjust, more])
-        let studioActions = NSStackView(views: [edit])
-        editingActions.spacing = 8
-        let primary = NSStackView(views: [playbackActions, editingActions, studioActions, clearSearchButton])
-        primary.spacing = 8
-        for button in [importButton, apply, edit] { button.bezelStyle = .rounded }
+        adjust.isBordered = false
+        adjust.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
+        adjust.imagePosition = .imageLeading
+        edit.isBordered = false
+        edit.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+        edit.imagePosition = .imageLeading
+        more.isBordered = false
+        let editingActions = NSStackView(views: [adjust, NSView(), edit, more])
+        editingActions.spacing = 12
+        let primary = NSStackView(views: [editingActions, clearSearchButton])
+        primary.spacing = 12
+        apply.bezelStyle = .rounded
         apply.bezelColor = .controlAccentColor
         apply.contentTintColor = .white
         detail.font = .systemFont(ofSize: 12)
-        right.setViews([poster, heading, detail, primary], in: .leading)
+        right.setViews([poster, playbackActions, heading, detail, primary], in: .leading)
         right.orientation = .vertical
         right.alignment = .leading
         right.spacing = 12
@@ -455,7 +471,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         browserItem.minimumThickness = 420
         let inspectorController = NSViewController()
         let inspector = NSVisualEffectView()
-        inspector.material = .sidebar
+        inspector.material = .contentBackground
         inspector.blendingMode = .behindWindow
         inspector.state = .followsWindowActiveState
         inspectorController.view = inspector
@@ -519,6 +535,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             poster.widthAnchor.constraint(equalTo: right.widthAnchor),
             poster.heightAnchor.constraint(equalTo: poster.widthAnchor, multiplier: 9.0 / 16.0),
             heading.widthAnchor.constraint(equalTo: right.widthAnchor),
+            playbackActions.widthAnchor.constraint(equalTo: right.widthAnchor),
+            editingActions.widthAnchor.constraint(equalTo: right.widthAnchor),
             detail.widthAnchor.constraint(equalTo: right.widthAnchor),
         ])
         pane.isCollapsed = inspectorButton.state == .off
