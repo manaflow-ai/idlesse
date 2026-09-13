@@ -329,7 +329,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     /// `retainedAccess` keeps a source-root grant alive while we mint a scoped
     /// bookmark for the chosen Library item. A desktop-span scene is always
     /// global; ordinary scenes can become stable per-display overrides.
-    func assignLibraryWallpaper(_ url: URL, to displayID: UInt32?, retaining retainedAccess: AnyObject? = nil) {
+    func assignLibraryWallpaper(_ url: URL, to displayID: UInt32?, retaining retainedAccess: AnyObject? = nil, allowsDesktopSpan: Bool = true) {
         do {
             let data = try bookmarkData(for: url)
             var stale = false
@@ -349,9 +349,24 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 do {
                     let candidate = try await self.source.resolve(scopedURL)
                     if candidate.canvas == .desktopSpan {
+                        guard allowsDesktopSpan else {
+                            self.showError("This wallpaper spans all displays. Use Set Wallpaper to apply it across the desktop.")
+                            return
+                        }
                         Self.appendLine("Idlesse-display target=\(Self.persistentDisplayIdentifier(displayID)) action=desktop-span-all-displays")
                         self.select(scopedURL, automatic: true)
                         return
+                    }
+                    // Keep every other connected screen on its visible shared wallpaper
+                    // when a targeted assignment changes the mode to per-display.
+                    if self.sameWallpaperOnAllDisplays, let current = self.selectedURL {
+                        let sharedData = try self.bookmarkData(for: current)
+                        for screen in NSScreen.screens {
+                            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32,
+                                  id != displayID else { continue }
+                            self.displayAssignmentStore.setBookmarkData(sharedData,
+                                persistentID: Self.persistentDisplayIdentifier(id))
+                        }
                     }
                     self.displayAssignmentStore.setBookmarkData(data,
                         persistentID: Self.persistentDisplayIdentifier(displayID))

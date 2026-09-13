@@ -34,7 +34,9 @@ private final class DisplayMapView: NSView {
     override var isFlipped: Bool { true }
     private func previewsDrop(on displayID: UInt32) -> Bool {
         guard let dropTarget else { return false }
-        return plan?.mode != .perDisplay || dropTarget == displayID
+        guard let target = topology.displays.first(where: { $0.liveID == dropTarget }),
+              let display = topology.displays.first(where: { $0.liveID == displayID }) else { return false }
+        return topology.master(for: target).liveID == topology.master(for: display).liveID
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -98,7 +100,7 @@ private final class DisplayMapView: NSView {
                                width: max(10, frame.width - 20), height: 15),
                     withAttributes: detailAttributes)
             }
-            let sourceCaption = previewsDrop(on: display.liveID) ? (plan?.mode == .perDisplay ? "Release to assign" : "Release to assign to all") : (assignment?.sourceURL.map(displayName) ?? "No Wallpaper")
+            let sourceCaption = previewsDrop(on: display.liveID) ? "Release to assign" : (assignment?.sourceURL.map(displayName) ?? "No Wallpaper")
             (sourceCaption as NSString).draw(
                 in: NSRect(x: frame.minX + 10, y: frame.maxY - 26,
                            width: max(10, frame.width - 20), height: 15),
@@ -283,7 +285,7 @@ final class DisplayAssignmentViewController: NSViewController {
         let buttons = NSStackView(views: [useDefault, openLibrary])
         buttons.spacing = 8
         hint.textColor = .secondaryLabelColor
-        hint.stringValue = "Drag a wallpaper onto a display to preview its placement. Release to apply; shared mode updates all displays."
+        hint.stringValue = "Drag a wallpaper onto a display to preview its placement. Release to apply to that display."
 
         let detailBox = NSBox()
         detailBox.boxType = .custom
@@ -450,13 +452,9 @@ final class DisplayAssignmentViewController: NSViewController {
     private func assign(_ url: URL, to displayID: UInt32) {
         guard let wallpaper else { return }
         pendingLibraryTarget = nil
-        if wallpaper.desktopSpanActive || wallpaper.sameWallpaperOnAllDisplays {
-            wallpaper.assignLibraryWallpaper(url, to: nil)
-            return
-        }
         let display = topology.displays.first(where: { $0.liveID == displayID })
         let target = display.map { topology.master(for: $0).liveID } ?? displayID
-        wallpaper.assignLibraryWallpaper(url, to: target)
+        wallpaper.assignLibraryWallpaper(url, to: target, allowsDesktopSpan: false)
     }
 
     @objc private func clearSelected() {
