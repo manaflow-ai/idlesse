@@ -226,15 +226,6 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         libraryView.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(libraryView)
-        playerBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        contentHost.addSubview(playerBackdrop, positioned: .below, relativeTo: libraryView)
-        libraryView.layer?.backgroundColor = NSColor.clear.cgColor
-        NSLayoutConstraint.activate([
-            playerBackdrop.topAnchor.constraint(equalTo: contentHost.topAnchor),
-            playerBackdrop.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
-            playerBackdrop.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            playerBackdrop.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-        ])
         NSLayoutConstraint.activate([
             libraryView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             libraryView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
@@ -576,21 +567,41 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         playerArtwork.wantsLayer = true
         playerArtwork.layer?.cornerRadius = 6
         playerArtwork.layer?.masksToBounds = true
-        playerArtwork.widthAnchor.constraint(equalToConstant: 60).isActive = true
-        playerArtwork.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        playerArtwork.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        playerArtwork.heightAnchor.constraint(equalToConstant: 32).isActive = true
         let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
         transport.spacing = 0
         let divider = NSBox()
         divider.boxType = .separator
         divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
         divider.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        let controls = NSStackView(views: [labels, transport, playerSound])
+        let controls = NSStackView(views: [playerArtwork, labels, transport, playerSound])
         controls.spacing = 10
         controls.alignment = .centerY
         controls.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 8)
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.isBordered = false
-        item.view = controls
+        let surface = NSView()
+        surface.wantsLayer = true
+        surface.layer?.cornerRadius = 20
+        surface.layer?.masksToBounds = true
+        surface.layer?.borderWidth = 0.5
+        surface.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
+        playerBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        surface.addSubview(playerBackdrop)
+        surface.addSubview(controls)
+        NSLayoutConstraint.activate([
+            playerBackdrop.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
+            playerBackdrop.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+            playerBackdrop.topAnchor.constraint(equalTo: surface.topAnchor),
+            playerBackdrop.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
+            controls.leadingAnchor.constraint(equalTo: surface.leadingAnchor, constant: 4),
+            controls.trailingAnchor.constraint(equalTo: surface.trailingAnchor, constant: -6),
+            controls.topAnchor.constraint(equalTo: surface.topAnchor),
+            controls.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
+        ])
+        item.view = surface
         item.label = "Now Playing"
         item.paletteLabel = "Now Playing"
         return item
