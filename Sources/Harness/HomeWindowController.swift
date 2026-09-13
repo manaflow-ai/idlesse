@@ -336,38 +336,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         }
     }
 
-    private var navigationHistory: [SidebarRow] = []
-    private var historyIndex = -1
-    private var restoringHistory = false
-    private let backNavigation = LibraryHoverButton(frame: .zero)
-    private let forwardNavigation = LibraryHoverButton(frame: .zero)
-
-    @objc private func navigateBack() { navigateHistory(-1) }
-    @objc private func navigateForward() { navigateHistory(1) }
-    private func navigateHistory(_ delta: Int) {
-        let next = historyIndex + delta
-        guard navigationHistory.indices.contains(next) else { return }
-        historyIndex = next
-        restoringHistory = true
-        let row = navigationHistory[next]
-        if let index = rows.firstIndex(of: row) {
-            sidebar.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            showLibraryScope(row)
-        }
-        restoringHistory = false
-        updateHistoryButtons()
-    }
-    private func updateHistoryButtons() {
-        backNavigation.isEnabled = historyIndex > 0
-        forwardNavigation.isEnabled = historyIndex + 1 < navigationHistory.count
-    }
     private func showLibraryScope(_ row: SidebarRow) {
-        if !restoringHistory && (historyIndex < 0 || navigationHistory[historyIndex] != row) {
-            navigationHistory = Array(navigationHistory.prefix(historyIndex + 1))
-            navigationHistory.append(row)
-            historyIndex = navigationHistory.count - 1
-        }
-        updateHistoryButtons()
         library.setSearchEnabled(true)
         currentRow = row
         libraryView.isHidden = false
@@ -554,13 +523,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let button = LibraryHoverButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!, target: self, action: #selector(toggleSidebar))
             button.isBordered = false
-            configureTransport(backNavigation, symbol: "arrow.left", label: "Back", action: #selector(navigateBack))
-            configureTransport(forwardNavigation, symbol: "arrow.right", label: "Forward", action: #selector(navigateForward))
-            updateHistoryButtons()
-            let navigation = NSStackView(views: [button, backNavigation, forwardNavigation])
-            navigation.alignment = .centerY
-            navigation.spacing = 2
-            item.view = navigation
+            button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            button.toolTip = "Show or hide sidebar"
+            item.isBordered = false
+            item.view = button
             item.label = "Sidebar"
             item.target = self
             item.action = #selector(toggleSidebar)
