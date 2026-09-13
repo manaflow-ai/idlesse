@@ -912,7 +912,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         precondition(home.window.toolbar != nil)
         precondition(!home.window.toolbar!.items.map(\.itemIdentifier).contains(Self.settingsItem))
         let searchItem = home.window.toolbar!.items.first { $0.itemIdentifier == Self.searchItem }
-        precondition(searchItem == nil, "Search belongs in Library content")
+        precondition(searchItem != nil, "Search belongs beside the player in the toolbar")
         precondition(!home.window.toolbar!.items.contains { $0.itemIdentifier == Self.importItem })
         var openedSettings = false
         wallpaper.onShowSettings = { openedSettings = true }
