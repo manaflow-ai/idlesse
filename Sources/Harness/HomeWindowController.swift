@@ -58,6 +58,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private var rows: [SidebarRow] = []
     private var currentRow: SidebarRow = .library
     private var sidebarItem: NSSplitViewItem?
+    private weak var navigationSplit: NSSplitView?
     private var refreshTimer: Timer?
 
     private let nowPlayingButton = NSButton(title: "No Wallpaper", target: nil, action: nil)
@@ -209,6 +210,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         contentItem.minimumThickness = 700
 
         let split = NSSplitViewController()
+        navigationSplit = split.splitView
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(contentItem)
         split.splitView.dividerStyle = .thin
@@ -218,15 +220,6 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         libraryView.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(libraryView)
-        let junction = LibrarySurfaceJunction()
-        junction.translatesAutoresizingMaskIntoConstraints = false
-        contentHost.addSubview(junction)
-        NSLayoutConstraint.activate([
-            junction.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            junction.topAnchor.constraint(equalTo: contentHost.safeAreaLayoutGuide.topAnchor),
-            junction.widthAnchor.constraint(equalToConstant: 26),
-            junction.heightAnchor.constraint(equalToConstant: 26),
-        ])
         NSLayoutConstraint.activate([
             libraryView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             libraryView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
@@ -239,13 +232,12 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     private func refreshSidebar() {
         var next: [SidebarRow] = [
-            .library, .favorites, .recent,
+            .library, .favorites, .recent, .displays,
             .group("Collections"),
         ]
         if let store = try? SceneLibraryStore(file: indexURL) {
             next.append(contentsOf: store.catalog.collections.map { .collection(id: $0.id, name: $0.name) })
         }
-        next.append(contentsOf: [.group("Workspace"), .displays])
         rows = next
         sidebar.reloadData()
         if let index = rows.firstIndex(of: currentRow), rows[index].selectable {
@@ -289,6 +281,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
                 let row = NSStackView(views: [text, spacer, add])
                 row.spacing = 4
+                row.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
                 return row
             }
             return text
@@ -319,7 +312,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let index = sidebar.selectedRow
         guard rows.indices.contains(index) else { return }
         switch rows[index] {
-        case .library, .favorites, .recent, .collection(_, _): showLibraryScope(rows[index])
+        case .library, .favorites, .recent, .displays, .collection(_, _): showLibraryScope(rows[index])
         case .displays: showDisplays()
         case .group: break
         }
@@ -466,6 +459,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     // MARK: - Now Playing
 
+    private static let columnDividerItem = NSToolbarItem.Identifier("Idlesse.Home.ColumnDivider")
     private static let sidebarToggleItem = NSToolbarItem.Identifier("Idlesse.Home.Sidebar")
     private static let searchItem = NSToolbarItem.Identifier("Idlesse.Home.Search")
     private static let importItem = NSToolbarItem.Identifier("Idlesse.Home.Import")
@@ -486,15 +480,18 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if itemIdentifier == Self.columnDividerItem, let navigationSplit {
+            return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: navigationSplit, dividerIndex: 0)
+        }
         if itemIdentifier == Self.searchItem {
             return library.makeSearchToolbarItem(identifier: itemIdentifier)
         }
@@ -547,7 +544,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.alignment = .leading
         labels.spacing = 0
         nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        labels.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        labels.widthAnchor.constraint(equalToConstant: 120).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
@@ -767,24 +764,5 @@ private final class LibraryNavigationRow: NSTableRowView {
         guard isSelected else { return }
         NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.12 : 0.07).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
-    }
-}
-
-/// The sidebar surface turns into the header around the content's upper corner.
-/// Decorative only: it never intercepts clicks or participates in accessibility.
-private final class LibrarySurfaceJunction: NSView {
-    override var isFlipped: Bool { true }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func draw(_ dirtyRect: NSRect) {
-        let radius = min(bounds.width, bounds.height)
-        let path = NSBezierPath()
-        path.move(to: .zero)
-        path.line(to: NSPoint(x: radius, y: 0))
-        path.curve(to: NSPoint(x: 0, y: radius),
-                   controlPoint1: NSPoint(x: radius * 0.448, y: 0),
-                   controlPoint2: NSPoint(x: 0, y: radius * 0.448))
-        path.close()
-        NSColor.underPageBackgroundColor.setFill()
-        path.fill()
     }
 }
