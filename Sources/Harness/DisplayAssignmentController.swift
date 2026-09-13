@@ -5,6 +5,19 @@ extension Notification.Name {
 }
 
 private final class DisplayMapView: NSView {
+    var artwork: [URL: NSImage] = [:] { didSet { needsDisplay = true } }
+    var requestArtwork: ((URL, @escaping (NSImage) -> Void) -> Void)?
+    private var pendingArtwork = Set<URL>()
+    private var dropTarget: UInt32?
+    private var dropURL: URL?
+    private func loadArtwork(_ url: URL) {
+        guard artwork[url] == nil, !pendingArtwork.contains(url), let requestArtwork else { return }
+        pendingArtwork.insert(url)
+        requestArtwork(url) { [weak self] image in
+            self?.pendingArtwork.remove(url)
+            self?.artwork[url] = image
+        }
+    }
     var topology = DisplayTopology(displays: []) { didSet { needsDisplay = true } }
     var plan: ResolvedWallpaperAssignmentPlan? { didSet { needsDisplay = true } }
     var selectedID: UInt32? { didSet { needsDisplay = true; onSelection?(selectedID) } }
@@ -19,6 +32,10 @@ private final class DisplayMapView: NSView {
 
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
+    private func previewsDrop(on displayID: UInt32) -> Bool {
+        guard let dropTarget else { return false }
+        return plan?.mode != .perDisplay || dropTarget == displayID
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -29,10 +46,27 @@ private final class DisplayMapView: NSView {
             let mirrored = display.mirrorMasterID != nil
             let master = topology.master(for: display)
             let path = NSBezierPath(roundedRect: frame, xRadius: 9, yRadius: 9)
-            (selected ? NSColor.controlAccentColor.withAlphaComponent(0.20) : NSColor.controlBackgroundColor).setFill()
+            NSColor.black.withAlphaComponent(0.75).setFill()
             path.fill()
-            (selected ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
-            path.lineWidth = selected ? 3 : 1.5
+            let source = previewsDrop(on: display.liveID) ? dropURL : plan?.assignment(for: display.liveID)?.sourceURL
+            if let source {
+                loadArtwork(source)
+                if let image = artwork[source] {
+                    NSGraphicsContext.saveGraphicsState()
+                    path.addClip()
+                    var canvas = frame
+                    if plan?.mode == .desktopSpan && dropTarget == nil {
+                        canvas = frames.values.reduce(NSRect.null) { $0.union($1) }
+                    }
+                    let scale = max(canvas.width / max(1, image.size.width), canvas.height / max(1, image.size.height))
+                    let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+                    image.draw(in: NSRect(x: canvas.midX-size.width/2, y: canvas.midY-size.height/2, width: size.width, height: size.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                    NSGradient(colors: [.black.withAlphaComponent(0.55), .clear, .black.withAlphaComponent(0.65)])?.draw(in: frame, angle: 90)
+                    NSGraphicsContext.restoreGraphicsState()
+                }
+            }
+            (previewsDrop(on: display.liveID) ? NSColor.white : (selected ? NSColor.labelColor : NSColor.separatorColor)).setStroke()
+            path.lineWidth = selected ? 2 : 1
             path.stroke()
 
             if mirrored {
@@ -48,11 +82,11 @@ private final class DisplayMapView: NSView {
             if mirrored { title += " · Mirrored" }
             let titleAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: NSColor.white,
             ]
             let detailAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10),
-                .foregroundColor: NSColor.secondaryLabelColor,
+                .foregroundColor: NSColor.white.withAlphaComponent(0.85),
             ]
             (title as NSString).draw(
                 in: NSRect(x: frame.minX + 10, y: frame.minY + 9,
@@ -64,8 +98,8 @@ private final class DisplayMapView: NSView {
                                width: max(10, frame.width - 20), height: 15),
                     withAttributes: detailAttributes)
             }
-            let source = assignment?.sourceURL.map(displayName) ?? "No Wallpaper"
-            (source as NSString).draw(
+            let sourceCaption = previewsDrop(on: display.liveID) ? (plan?.mode == .perDisplay ? "Release to assign" : "Release to assign to all") : (assignment?.sourceURL.map(displayName) ?? "No Wallpaper")
+            (sourceCaption as NSString).draw(
                 in: NSRect(x: frame.minX + 10, y: frame.maxY - 26,
                            width: max(10, frame.width - 20), height: 15),
                 withAttributes: detailAttributes)
@@ -81,15 +115,27 @@ private final class DisplayMapView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        destination(for: sender) == nil ? [] : .copy
+        let target = destination(for: sender)
+        dropTarget = target?.0
+        dropURL = target?.1
+        if let dropURL { loadArtwork(dropURL) }
+        needsDisplay = true
+        return target == nil ? [] : .copy
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        destination(for: sender) == nil ? [] : .copy
+        let target = destination(for: sender)
+        dropTarget = target?.0
+        dropURL = target?.1
+        if let dropURL { loadArtwork(dropURL) }
+        needsDisplay = true
+        return target == nil ? [] : .copy
     }
 
+    override func draggingExited(_ sender: NSDraggingInfo?) { dropTarget = nil; dropURL = nil; needsDisplay = true }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let (displayID, url) = destination(for: sender) else { return false }
+        dropTarget = nil; dropURL = nil; needsDisplay = true
         selectedID = displayID
         onDrop?(displayID, url)
         return true
@@ -122,6 +168,10 @@ final class DisplayAssignmentViewController: NSViewController {
         let expires: Date
     }
 
+    var requestArtwork: ((URL, @escaping (NSImage) -> Void) -> Void)? {
+        didSet { mapView.requestArtwork = requestArtwork; mapView.needsDisplay = true }
+    }
+    private let compact: Bool
     private weak var wallpaper: WallpaperController?
     private let mode = NSSegmentedControl(
         labels: ["Same on All", "Per Display", "Desktop Span"],
@@ -143,7 +193,8 @@ final class DisplayAssignmentViewController: NSViewController {
     private var observers: [NSObjectProtocol] = []
     private let arrangements = KnownDisplayArrangementsStore(defaults: .standard)
 
-    init(wallpaper: WallpaperController) {
+    init(wallpaper: WallpaperController, compact: Bool = false) {
+        self.compact = compact
         self.wallpaper = wallpaper
         super.init(nibName: nil, bundle: nil)
         observers.append(NotificationCenter.default.addObserver(
@@ -187,9 +238,10 @@ final class DisplayAssignmentViewController: NSViewController {
         let title = NSTextField(labelWithString: "Displays")
         title.font = .systemFont(ofSize: 25, weight: .semibold)
         let subtitle = NSTextField(wrappingLabelWithString:
-            "Rectangles follow the real desktop positions and proportions reported by macOS, including offsets, gaps, mixed resolutions and mirroring.")
+            "Your wallpapers, arranged like your screens.")
         subtitle.textColor = .secondaryLabelColor
 
+        mode.selectedSegmentBezelColor = .controlColor
         mode.target = self
         mode.action = #selector(changeMode(_:))
         mode.setContentHuggingPriority(.required, for: .horizontal)
@@ -208,7 +260,7 @@ final class DisplayAssignmentViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         mapView.translatesAutoresizingMaskIntoConstraints = false
-        mapView.heightAnchor.constraint(greaterThanOrEqualToConstant: 285).isActive = true
+        mapView.heightAnchor.constraint(equalToConstant: compact ? 160 : 285).isActive = true
         mapView.onSelection = { [weak self] id in self?.select(id) }
         mapView.onDrop = { [weak self] id, url in self?.assign(url, to: id) }
 
@@ -222,11 +274,11 @@ final class DisplayAssignmentViewController: NSViewController {
         let buttons = NSStackView(views: [useDefault, openLibrary])
         buttons.spacing = 8
         hint.textColor = .secondaryLabelColor
-        hint.stringValue = "Drop a wallpaper file onto a display, or choose a target and use Choose in Library. The existing Library remains the only catalog picker."
+        hint.stringValue = "Drag a wallpaper onto a display to preview its placement. Release to apply; shared mode updates all displays."
 
         let detailBox = NSBox()
         detailBox.boxType = .custom
-        detailBox.borderType = .lineBorder
+        detailBox.borderType = .noBorder
         detailBox.cornerRadius = 10
         detailBox.contentViewMargins = NSSize(width: 14, height: 12)
         if let boxContent = detailBox.contentView {
@@ -245,21 +297,23 @@ final class DisplayAssignmentViewController: NSViewController {
             ])
         }
 
-        let stack = NSStackView(views: [title, subtitle, controls, mapView, detailBox])
+        let canvasTitle = NSTextField(labelWithString: "Drag onto a display")
+        canvasTitle.font = .systemFont(ofSize: 12, weight: .medium)
+        let stack = NSStackView(views: compact ? [canvasTitle, mapView] : [title, subtitle, controls, mapView, detailBox])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
         subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
-        controls.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        if !compact { controls.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         mapView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        detailBox.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        if !compact { detailBox.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: compact ? 0 : 26),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: compact ? 0 : -26),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: compact ? 8 : 24),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: compact ? -8 : -24),
         ])
     }
 
@@ -285,6 +339,12 @@ final class DisplayAssignmentViewController: NSViewController {
         reloadArrangements(current: current)
         mapView.topology = topology
         mapView.plan = plan
+        mapView.setAccessibilityElement(true)
+        mapView.setAccessibilityRole(.image)
+        mapView.setAccessibilityLabel(topology.displays.map { display in
+            let title = plan?.assignment(for: display.liveID)?.sourceURL?.deletingPathExtension().lastPathComponent ?? "No wallpaper"
+            return "\(display.identity.name): \(title)"
+        }.joined(separator: "; "))
 
         switch plan?.mode {
         case .sameOnAll: mode.selectedSegment = 0
@@ -359,7 +419,7 @@ final class DisplayAssignmentViewController: NSViewController {
         } else {
             details.append("No wallpaper selected")
         }
-        details.append("Identity: \(topology.persistentKey(for: master))")
+
         detailText.stringValue = details.joined(separator: " · ")
         useDefault.isEnabled = plan?.mode == .perDisplay
             && assignment?.explicit == true

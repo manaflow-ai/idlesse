@@ -135,6 +135,18 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let gridScroll = NSScrollView()
     private let gridView = LibraryGridView()
     private let poster = NSImageView()
+    private let previewStage = NSView()
+    private var displayCanvas: DisplayAssignmentViewController?
+    private var dragAccess: OpenedItem?
+    func installDisplayCanvas(wallpaper: WallpaperController) {
+        guard displayCanvas == nil else { return }
+        let canvas = DisplayAssignmentViewController(wallpaper: wallpaper, compact: true)
+        canvas.requestArtwork = { [weak self] url, done in self?.requestPlaybackArtwork(url, completion: done) }
+        displayCanvas = canvas
+        right.addArrangedSubview(canvas.view)
+        canvas.view.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
+        canvas.activate()
+    }
     private var posterItemID: String?
     private let livePreviewButton = LibraryHoverButton(title: "Play Preview", target: nil, action: nil)
     private let previewHost = ScenePreviewHost()
@@ -449,6 +461,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             self?.selected = item
             self?.useScene()
         }
+        gridView.onDragURL = { [weak self] item in
+            guard let self, let opened = try? self.open(item) else { return nil }
+            self.dragAccess = opened
+            return opened.url
+        }
+        gridView.onDragEnd = { [weak self] in self?.dragAccess = nil }
         gridView.onRequestThumbnail = { [weak self] item, callback in
             self?.requestThumbnail(for: item, completion: callback)
         }
@@ -501,7 +519,31 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         apply.bezelColor = .controlAccentColor
         apply.contentTintColor = .white
         detail.font = .systemFont(ofSize: 12)
-        right.setViews([poster, playbackActions, heading, detail, primary], in: .leading)
+        let glassControls = NSVisualEffectView()
+        glassControls.material = .hudWindow
+        glassControls.blendingMode = .withinWindow
+        glassControls.state = .active
+        glassControls.wantsLayer = true
+        glassControls.layer?.cornerRadius = 8
+        glassControls.layer?.masksToBounds = true
+        previewStage.addSubview(poster)
+        previewStage.addSubview(glassControls)
+        glassControls.addSubview(playbackActions)
+        for view in [poster, glassControls, playbackActions] { view.translatesAutoresizingMaskIntoConstraints = false }
+        NSLayoutConstraint.activate([
+            poster.leadingAnchor.constraint(equalTo: previewStage.leadingAnchor),
+            poster.trailingAnchor.constraint(equalTo: previewStage.trailingAnchor),
+            poster.topAnchor.constraint(equalTo: previewStage.topAnchor),
+            poster.bottomAnchor.constraint(equalTo: previewStage.bottomAnchor),
+            glassControls.leadingAnchor.constraint(equalTo: previewStage.leadingAnchor, constant: 8),
+            glassControls.trailingAnchor.constraint(equalTo: previewStage.trailingAnchor, constant: -8),
+            glassControls.bottomAnchor.constraint(equalTo: previewStage.bottomAnchor, constant: -8),
+            playbackActions.leadingAnchor.constraint(equalTo: glassControls.leadingAnchor, constant: 8),
+            playbackActions.trailingAnchor.constraint(equalTo: glassControls.trailingAnchor, constant: -8),
+            playbackActions.topAnchor.constraint(equalTo: glassControls.topAnchor, constant: 5),
+            playbackActions.bottomAnchor.constraint(equalTo: glassControls.bottomAnchor, constant: -5),
+        ])
+        right.setViews([previewStage, heading, detail, primary], in: .leading)
         right.orientation = .vertical
         right.alignment = .leading
         right.spacing = 12
@@ -573,10 +615,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             right.leadingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: 16),
             right.trailingAnchor.constraint(equalTo: inspector.trailingAnchor, constant: -16),
             right.bottomAnchor.constraint(lessThanOrEqualTo: inspector.bottomAnchor, constant: -12),
-            poster.widthAnchor.constraint(equalTo: right.widthAnchor),
+            previewStage.widthAnchor.constraint(equalTo: right.widthAnchor),
             poster.heightAnchor.constraint(equalTo: poster.widthAnchor, multiplier: 9.0 / 16.0),
             heading.widthAnchor.constraint(equalTo: right.widthAnchor),
-            playbackActions.widthAnchor.constraint(equalTo: right.widthAnchor),
+
             editingActions.widthAnchor.constraint(equalTo: right.widthAnchor),
             detail.widthAnchor.constraint(equalTo: right.widthAnchor),
         ])

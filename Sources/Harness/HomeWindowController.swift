@@ -86,8 +86,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         self.wallpaper = wallpaper
         self.comfort = comfort
         self.libraryView = library.window!.contentView!
-        self.displaysDestinationController = displaysDestinationController
-        self.activateDisplaysDestination = activateDisplaysDestination
+        let destination = displaysDestinationController ?? DisplayAssignmentViewController(wallpaper: wallpaper)
+        self.displaysDestinationController = destination
+        self.activateDisplaysDestination = activateDisplaysDestination ?? { [weak destination] in
+            (destination as? DisplayAssignmentViewController)?.activate()
+        }
         if let indexURL {
             self.indexURL = indexURL
         } else {
@@ -97,6 +100,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         super.init()
         // main.swift installs the legacy Settings owner before AppSettings is
         // created. Home becomes the sheet/panel owner as soon as it exists.
+        library.installDisplayCanvas(wallpaper: wallpaper)
+        if let displays = self.displaysDestinationController as? DisplayAssignmentViewController {
+            displays.requestArtwork = { [weak library] url, done in library?.requestPlaybackArtwork(url, completion: done) }
+        }
         wallpaper.presentingWindow = { [weak library] in library?.window }
         library.onScopeChange = { [weak self] scope in
             guard let self else { return }
@@ -330,7 +337,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let index = sidebar.selectedRow
         guard rows.indices.contains(index) else { return }
         switch rows[index] {
-        case .library, .favorites, .recent, .displays, .collection(_, _): showLibraryScope(rows[index])
+        case .library, .favorites, .recent, .collection(_, _): showLibraryScope(rows[index])
         case .displays: showDisplays()
         case .group: break
         }
@@ -420,7 +427,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             NSLayoutConstraint.activate([
                 destination.leadingAnchor.constraint(equalTo: displaysView.leadingAnchor),
                 destination.trailingAnchor.constraint(equalTo: displaysView.trailingAnchor),
-                destination.topAnchor.constraint(equalTo: displaysView.topAnchor),
+                destination.topAnchor.constraint(equalTo: displaysView.safeAreaLayoutGuide.topAnchor),
                 destination.bottomAnchor.constraint(equalTo: separator.topAnchor),
                 separator.leadingAnchor.constraint(equalTo: displaysView.leadingAnchor),
                 separator.trailingAnchor.constraint(equalTo: displaysView.trailingAnchor),
@@ -616,6 +623,14 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         playerBackdrop.translatesAutoresizingMaskIntoConstraints = false
         controls.translatesAutoresizingMaskIntoConstraints = false
         surface.addSubview(playerBackdrop)
+        let glass = NSVisualEffectView()
+        glass.material = .hudWindow
+        glass.blendingMode = .withinWindow
+        glass.state = .active
+        glass.alphaValue = 0.30
+        glass.frame = surface.bounds
+        glass.autoresizingMask = [.width, .height]
+        surface.addSubview(glass)
         surface.addSubview(controls)
         NSLayoutConstraint.activate([
             playerBackdrop.leadingAnchor.constraint(equalTo: surface.leadingAnchor),

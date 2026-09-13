@@ -83,6 +83,8 @@ struct LibraryGridLayoutPlan {
 typealias LibraryItem = SceneLibraryController.Item
 
 final class LibraryGridView: NSView {
+    var onDragURL: ((LibraryItem) -> URL?)?
+    var onDragEnd: (() -> Void)?
     var onSelect: ((LibraryItem) -> Void)?
     var onMenu: ((LibraryItem) -> NSMenu)?
     var onDoubleAction: ((LibraryItem) -> Void)?
@@ -231,6 +233,8 @@ final class LibraryGridView: NSView {
                 changed = card.configure(item: item)
             } else {
                 card = reusableCards.popLast() ?? LibraryCardView(frame: .zero)
+                card.onDragURL = { [weak self] item in self?.onDragURL?(item) }
+                card.onDragEnd = { [weak self] in self?.onDragEnd?() }
                 card.onClick = { [weak self] item in self?.selectFromUser(item) }
                 card.onMenu = { [weak self] item in self?.onMenu?(item) }
                 card.onDoubleClick = { [weak self] item in self?.doubleActionFromUser(item) }
@@ -285,7 +289,45 @@ final class LibraryGridView: NSView {
 #endif
 }
 
-final class LibraryCardView: NSView {
+final class LibraryCardView: NSView, NSDraggingSource {
+    var onDragURL: ((LibraryItem) -> URL?)?
+    var onDragEnd: (() -> Void)?
+    private var mouseOrigin: NSPoint?
+    private var tracking: NSTrackingArea?
+    private var hovered = false
+    private let quickMenu = LibraryHoverButton(frame: .zero)
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; updateHover() }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateHover() }
+    private func updateHover() {
+        quickMenu.isHidden = !hovered
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(hovered ? 0.07 : 0).cgColor
+        thumbnailView.layer?.borderColor = NSColor.white.withAlphaComponent(0.30).cgColor
+        thumbnailView.layer?.borderWidth = hovered ? 1 : 0
+        needsLayout = true
+    }
+    @objc private func showQuickMenu() {
+        guard let item, let menu = onMenu?(item) else { return }
+        onClick?(item)
+        menu.popUp(positioning: nil, at: NSPoint(x: quickMenu.frame.minX, y: quickMenu.frame.maxY), in: self)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin = mouseOrigin, let item else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x-origin.x, point.y-origin.y) > 5, let url = onDragURL?(item) else { return }
+        mouseOrigin = nil
+        let dragging = NSDraggingItem(pasteboardWriter: url as NSURL)
+        dragging.setDraggingFrame(thumbnailView.frame, contents: thumbnailView.image)
+        beginDraggingSession(with: [dragging], event: event, source: self)
+    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragEnd?() }
+
     override var isFlipped: Bool { true }
     var onMenu: ((LibraryItem) -> NSMenu?)?
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -323,6 +365,17 @@ final class LibraryCardView: NSView {
         titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
         titleLabel.lineBreakMode = .byTruncatingTail
         addSubview(titleLabel)
+        quickMenu.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Wallpaper actions")
+        quickMenu.isBordered = false
+        quickMenu.contentTintColor = .white
+        quickMenu.wantsLayer = true
+        quickMenu.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        quickMenu.layer?.cornerRadius = 8
+        quickMenu.target = self
+        quickMenu.action = #selector(showQuickMenu)
+        quickMenu.toolTip = "Wallpaper actions"
+        quickMenu.isHidden = true
+        addSubview(quickMenu)
 
         badgeLabel.font = .systemFont(ofSize: 10, weight: .regular)
         badgeLabel.textColor = .secondaryLabelColor
@@ -336,6 +389,10 @@ final class LibraryCardView: NSView {
         super.layout()
         let thumbHeight = bounds.width * 9.0 / 16.0
         thumbnailView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: thumbHeight)
+        if hovered && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            thumbnailView.frame = thumbnailView.frame.insetBy(dx: -2, dy: -2)
+        }
+        quickMenu.frame = NSRect(x: bounds.width - 36, y: 6, width: 28, height: 26)
         let labelY = thumbHeight + 5
         titleLabel.frame = NSRect(x: 8, y: labelY, width: max(0, bounds.width - 16), height: 18)
         badgeLabel.frame = NSRect(x: 8, y: labelY + 18, width: max(0, bounds.width - 16), height: 14)
@@ -367,6 +424,8 @@ final class LibraryCardView: NSView {
         super.prepareForReuse()
         cancelThumbnailRequest()
         item = nil
+        hovered = false
+        updateHover()
         isSelected = false
         thumbnailView.image = Self.placeholderImage
         titleLabel.stringValue = ""
@@ -418,6 +477,7 @@ final class LibraryCardView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        mouseOrigin = convert(event.locationInWindow, from: nil)
         guard let item else { return }
         if event.clickCount == 2 { onDoubleClick?(item) }
         else { onClick?(item) }
