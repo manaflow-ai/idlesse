@@ -276,8 +276,16 @@ final class SceneLibraryStore {
         }
         if let bookmark = entry.bookmark {
             var stale = false
-            let url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI],
+            let url: URL
+            do {
+                url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI],
                               relativeTo: nil, bookmarkDataIsStale: &stale)
+            } catch {
+                // Older imports may contain a regular bookmark rather than a
+                // security-scoped one. Resolve that format without prompting.
+                url = try URL(resolvingBookmarkData: bookmark, options: [.withoutUI],
+                              relativeTo: nil, bookmarkDataIsStale: &stale)
+            }
             return Access(url: url, scopeURL: url, sourceID: nil)
         }
         guard let sourceID = entry.sourceID, let relative = entry.relativeMediaPath,

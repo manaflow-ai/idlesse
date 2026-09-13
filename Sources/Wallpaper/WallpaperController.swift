@@ -43,12 +43,15 @@ final class WallpaperSurface {
             UserDefaults.standard.bool(forKey: "comfort.liveMenuStrip")
     }
     static func usesMetal(_ scene: SceneDescriptor, menuAnimation: Bool) -> Bool {
-        menuAnimation || scene.canvas == .desktopSpan || scene.requiresMetal ||
+        menuAnimation || scene.canvas == .desktopSpan || scene.requiresMetal || scene.allNodes.contains { $0.kind == .video } ||
             ProcessInfo.processInfo.environment["IDLESSE_METAL_COMPOSITOR"] == "1"
     }
     let window: NSWindow
     let displayID: UInt32
     let usesSharedVideoHub: Bool
+    let videoHub: SharedVideoHub?
+    let sourceURL: URL?
+    private(set) var sceneDescriptor: SceneDescriptor
     private let renderer: SceneRenderer
     private let securityScope: WallpaperScopeLease?
     private var menuStrip: MenuBarStrip?
@@ -58,11 +61,18 @@ final class WallpaperSurface {
     var menuStripFrames: Int { menuStrip?.frames ?? 0 }
     var menuStripTiming: String { menuStrip?.timing.summary ?? "disabled" }
     var menuStripWindowNumber: Int? { menuStrip?.window.windowNumber }
-    func updateScene(_ scene: SceneDescriptor) -> Bool { renderer.updateScene(scene) }
+    func updateScene(_ scene: SceneDescriptor) -> Bool {
+        guard renderer.updateScene(scene) else { return false }
+        sceneDescriptor = scene
+        return true
+    }
 
     init(screen: NSScreen, playable: SceneDescriptor, clock: SceneClock, sharedHub: SharedVideoHub? = nil,
-         securityScope: WallpaperScopeLease? = nil, onError: @escaping (String) -> Void) throws {
+         securityScope: WallpaperScopeLease? = nil, sourceURL: URL? = nil, onError: @escaping (String) -> Void) throws {
         displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
+        self.videoHub = sharedHub
+        self.sourceURL = sourceURL?.standardizedFileURL
+        self.sceneDescriptor = playable
         self.usesSharedVideoHub = sharedHub != nil
         self.securityScope = securityScope
         window = DesktopWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
@@ -370,8 +380,13 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == displayID
                        }) {
                         var preparationError: String?
-                        let surface = try WallpaperSurface(screen: screen, playable: candidate, clock: self.clock,
-                            securityScope: WallpaperScopeLease(scopedURL)) { [weak self] message in
+                        let synchronizedSurface = self.surfaces.first { $0.sourceURL == scopedURL.standardizedFileURL && $0.videoHub != nil }
+                        let displayScene = synchronizedSurface?.sceneDescriptor ?? candidate
+                        let hub = synchronizedSurface?.videoHub ?? (candidate.allNodes.contains { $0.kind == .video } ?
+                            SharedVideoHub(scene: candidate, clock: self.clock) { [weak self] message in self?.showError(message) } : nil)
+                        if synchronizedSurface == nil { hub?.setPaused(false) }
+                        let surface = try WallpaperSurface(screen: screen, playable: displayScene, clock: self.clock,
+                            sharedHub: hub, securityScope: WallpaperScopeLease(scopedURL), sourceURL: scopedURL) { [weak self] message in
                             guard let self, self.generation == assignmentGeneration,
                                   self.displayAssignmentRequests[displayID] == assignmentRequest else { return }
                             preparationError = message
@@ -421,7 +436,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                         replacement.setPaused(self.shouldPause)
                         if self.presentsWindows { replacement.show(paused: self.shouldPause) }
                         previous.forEach { $0.close() }
-                        if !self.surfaces.contains(where: { $0.usesSharedVideoHub }) {
+                        if let active = self.activeSharedVideoHub, !self.surfaces.contains(where: { $0.videoHub === active }) {
                             self.activeSharedVideoHub?.close()
                             self.activeSharedVideoHub = nil
                         }
@@ -429,6 +444,8 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                             self.syncSystemBackdrop(scene: scene, sourceURL: sourceURL,
                                 request: self.generation, onlyDisplayID: displayID)
                         }
+                        self.applySharedHubPause()
+                        self.surfaces.forEach { $0.videoHub?.setMuted(!self.soundEnabled) }
                         self.updateMenu()
                         NotificationCenter.default.post(name: .idlesseDisplayAssignmentsChanged, object: self)
                     } else {
@@ -796,9 +813,13 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         }
     }
     private func applySharedHubPause() {
-        let resting = coveragePauseEnabled ? surfaces.map(\.isCovered) : []
-        activeSharedVideoHub?.setPaused(CoverageRestPolicy.shouldRestSharedPlayback(
-            globalPause: shouldPause, displayResting: resting))
+        var visited: Set<ObjectIdentifier> = []
+        for surface in surfaces {
+            guard let hub = surface.videoHub, visited.insert(ObjectIdentifier(hub)).inserted else { continue }
+            let group = surfaces.filter { $0.videoHub === hub }
+            let resting = coveragePauseEnabled ? group.map(\.isCovered) : []
+            hub.setPaused(CoverageRestPolicy.shouldRestSharedPlayback(globalPause: shouldPause, displayResting: resting))
+        }
     }
     private var desktopReveal = DesktopRevealPolicy()
 
@@ -892,7 +913,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         }
     }
     private func applyMute() {
-        activeSharedVideoHub?.setMuted(!soundEnabled)
+        surfaces.forEach { $0.videoHub?.setMuted(!soundEnabled) }
         surfaces.forEach { $0.setMuted(!soundEnabled) }
     }
 
@@ -944,7 +965,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 }
                 var preparationError: String?
                 let (replacement, newHub) = self.suspended ? ([], nil) :
-                    try self.makeSurfaces(playable: playable, clock: candidateClock, request: request, onError: { [weak self] message in
+                    try self.makeSurfaces(playable: playable, clock: candidateClock, request: request, sourceURL: url, onError: { [weak self] message in
                         if adopted { self?.stop(); self?.showError(message) }
                         else { preparationError = message }
                     })
@@ -953,8 +974,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                     if !adopted { replacement.forEach { $0.close() }; newHub?.close() }
                 }
                 if self.presentsWindows && !replacement.isEmpty {
-                    newHub?.setMuted(true)
-                    newHub?.setPaused(false)
+                    replacement.forEach { $0.videoHub?.setMuted(true); $0.videoHub?.setPaused(false) }
                     replacement.forEach { $0.prepareForDisplay() }
                     let deadline = ProcessInfo.processInfo.systemUptime + 10
                     while !replacement.allSatisfy({ $0.isReadyForDisplay }) {
@@ -1006,7 +1026,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 self.activeSharedVideoHub = newHub
                 self.applySharedHubPause()
                 replacement.forEach { $0.setPaused(self.shouldPause) }
-                self.activeSharedVideoHub?.setMuted(!self.soundEnabled)
+                self.surfaces.forEach { $0.videoHub?.setMuted(!self.soundEnabled) }
                 replacement.forEach { $0.setMuted(!self.soundEnabled) }
                 if self.suspended { self.releaseSurfaces() }
                 else if self.presentsWindows {
@@ -1055,24 +1075,26 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         }
     }
 
-    private func makeSurfaces(playable: SceneDescriptor, clock: SceneClock, request: Int, onError: ((String) -> Void)? = nil) throws -> (surfaces: [WallpaperSurface], hub: SharedVideoHub?) {
+    private func makeSurfaces(playable: SceneDescriptor, clock: SceneClock, request: Int, sourceURL: URL? = nil, onError: ((String) -> Void)? = nil) throws -> (surfaces: [WallpaperSurface], hub: SharedVideoHub?) {
         surfaceGeneration += 1
         let surfaceRequest = surfaceGeneration
         var result: [WallpaperSurface] = []
         let hasVideo = playable.allNodes.contains { $0.kind == .video }
         let sharesSceneAcrossDisplays = sameWallpaperOnAllDisplays || playable.canvas == .desktopSpan
         let needsMetal = WallpaperSurface.usesMetal(playable, menuAnimation: WallpaperSurface.liveMenuStripEnabled)
-        let sharedHub = (sharesSceneAcrossDisplays && hasVideo && needsMetal) ? SharedVideoHub(scene: playable, clock: clock) { [weak self] message in
+        let sharedHub = (hasVideo && needsMetal) ? SharedVideoHub(scene: playable, clock: clock) { [weak self] message in
             guard let self, self.generation == request,
                   self.surfaceGeneration == surfaceRequest else { return }
             if let onError { onError(message); return }
             self.stop()
             self.showError(message)
         } : nil
+        var overrideGroups: [URL: (SceneDescriptor, SharedVideoHub?)] = [:]
         do {
             for screen in NSScreen.screens {
                 var screenPlayable = playable
-                var screenHub = sharesSceneAcrossDisplays ? sharedHub : nil
+                var screenSource = sourceURL ?? selectedURL
+                var screenHub = sharedHub
                 var screenScope: WallpaperScopeLease?
                 if !sharesSceneAcrossDisplays {
                     let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
@@ -1082,8 +1104,16 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                             if resolved.canvas == .desktopSpan {
                                 Self.appendLine("Idlesse-display display=\(Self.persistentDisplayIdentifier(displayID)) action=ignore-saved-desktop-span")
                             } else {
-                                screenPlayable = resolved
-                                screenHub = nil
+                                let key = overrideURL.standardizedFileURL
+                                if let group = overrideGroups[key] {
+                                    screenPlayable = group.0
+                                    screenHub = group.1
+                                } else {
+                                    screenPlayable = resolved
+                                    screenHub = resolved.allNodes.contains { $0.kind == .video } ? SharedVideoHub(scene: resolved, clock: clock) { [weak self] message in self?.showError(message) } : nil
+                                    overrideGroups[key] = (screenPlayable, screenHub)
+                                }
+                                screenSource = overrideURL
                                 screenScope = lease
                             }
                         }
@@ -1091,7 +1121,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 }
                 let surface = try autoreleasepool {
                     try WallpaperSurface(screen: screen, playable: screenPlayable, clock: clock,
-                        sharedHub: screenHub, securityScope: screenScope) { [weak self] message in
+                        sharedHub: screenHub, securityScope: screenScope, sourceURL: screenSource) { [weak self] message in
                         guard let self, self.generation == request,
                               self.surfaceGeneration == surfaceRequest else { return }
                         if let onError { onError(message); return }
@@ -1285,7 +1315,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             activeSharedVideoHub = newHub
             applySharedHubPause()
             surfaces.forEach { $0.setPaused(shouldPause) }
-            activeSharedVideoHub?.setMuted(!soundEnabled)
+            surfaces.forEach { $0.videoHub?.setMuted(!soundEnabled) }
             surfaces.forEach { $0.setMuted(!soundEnabled) }
             if presentsWindows { surfaces.forEach { $0.show(paused: shouldPause) } }
         } catch {
@@ -1417,6 +1447,10 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             precondition(controller.surfaces.contains(where: { $0 === surface }), "Other displays must keep their renderer and playback state")
         }
         precondition(!controller.sameWallpaperOnAllDisplays)
+        if let hub = initial.hub {
+            precondition(controller.surfaces.allSatisfy { $0.videoHub === hub }, "Identical videos must join the existing decoder")
+            precondition(controller.activeSharedVideoHub === hub, "Joining a synchronized group must retain its transport")
+        }
         print("Targeted assignment passed: one surface replaced; \(untouched.count) unchanged display renderer(s) retained")
     }
 

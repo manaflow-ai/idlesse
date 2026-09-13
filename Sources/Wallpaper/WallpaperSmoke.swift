@@ -215,6 +215,9 @@ enum WallpaperSmoke {
         try animatedImageChecks(folder: folder)
         coverageChecks()
         let controller = WallpaperController()
+        let assignmentSuite = "Idlesse.WallpaperSmoke." + UUID().uuidString
+        controller.resumeDefaults = UserDefaults(suiteName: assignmentSuite)!
+        defer { controller.resumeDefaults.removePersistentDomain(forName: assignmentSuite) }
         controller.presentsWindows = false
         var errors: [String] = []
         controller.onError = { errors.append($0) }
@@ -292,8 +295,8 @@ enum WallpaperSmoke {
         controller.select(package)
         wait { !controller.isLoading }
         precondition(errors.isEmpty)
-        let composite = controller.surfaces[0].window.contentView!
-        precondition(composite.subviews.count == 2 && composite.subviews[1].subviews[0].alphaValue == 0.25)
+        precondition(controller.surfaces[0].diagnostics.activeResources == 2,
+                     "The video and overlay must both be present in the compositor")
         controller.togglePause()
         precondition(controller.surfaces[0].diagnostics.state == .paused)
         controller.togglePause()
@@ -307,7 +310,7 @@ enum WallpaperSmoke {
         wait { controller.revision > beforeRevision }
         precondition(controller.pausedByUser && controller.sceneTime == beforeTime)
         precondition(controller.surfaces[0].diagnostics.state == .paused)
-        precondition(controller.surfaces[0].window.contentView!.subviews[1].subviews[0].alphaValue == 0.6)
+        precondition(controller.surfaces[0].sceneDescriptor.allNodes[1].opacity == 0.6, "Live edits must reach the running scene")
         let goodRevision = controller.revision
         try Data("unfinished edit".utf8).write(to: package.appendingPathComponent("scene.json"), options: .atomic)
         wait { controller.lastReloadError != nil }

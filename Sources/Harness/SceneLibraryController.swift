@@ -970,6 +970,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         requestThumbnail(for: item, completion: completion)
     }
 
+    private var thumbnailRetryCounts: [String: Int] = [:]
     func requestThumbnail(for item: Item, completion: @escaping (NSImage) -> Void) {
         let revision = thumbnailRevisions[item.id, default: 0]
         let requestID = revision == 0 ? item.id : "\(item.id)|\(revision)"
@@ -985,7 +986,15 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 guard let self else { return }
                 let callbacks = self.pendingThumbnails.removeValue(forKey: requestID) ?? []
                 guard self.thumbnailRevisions[item.id, default: 0] == revision else { return }
-                if let image { callbacks.forEach { $0(image) } }
+                if let image {
+                    self.thumbnailRetryCounts.removeValue(forKey: requestID)
+                    callbacks.forEach { $0(image) }
+                } else if self.thumbnailRetryCounts[requestID, default: 0] < 2 {
+                    self.thumbnailRetryCounts[requestID, default: 0] += 1
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                        self?.requestThumbnail(for: item) { image in callbacks.forEach { $0(image) } }
+                    }
+                }
             }
         }
         let posterAccess: SceneLibraryStore.Access? = item.entry.flatMap { try? store.accessPoster($0) }
@@ -1013,10 +1022,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 ?? Self.listThumbnail(source.deletingLastPathComponent().appendingPathComponent(source.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "-Restored-4K60", with: "") + ".jpg")) {
                 image = sidecar
             } else if ["mp4", "mov", "m4v"].contains(source.pathExtension.lowercased()) {
-                let generator = AVAssetImageGenerator(asset: AVURLAsset(url: source))
-                generator.appliesPreferredTrackTransform = true
-                generator.maximumSize = CGSize(width: 320, height: 180)
-                image = try? generator.copyCGImage(at: CMTime(seconds: 0, preferredTimescale: 600), actualTime: nil)
+                image = Self.videoThumbnail(source)
             } else { image = nil }
             guard let image else { finish(nil); return }
             let rendered = Self.framedThumbnail(image, framing: framing,
@@ -1065,16 +1071,24 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             kCGImageSourceThumbnailMaxPixelSize: 320
         ] as CFDictionary)
     }
+    private static func videoThumbnail(_ url: URL) -> CGImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 320, height: 180)
+        // Some encodes have no independently decodable frame at time zero.
+        for seconds in [0.5, 0, 2] {
+            if let image = try? generator.copyCGImage(at: CMTime(seconds: seconds, preferredTimescale: 600), actualTime: nil) { return image }
+        }
+        return nil
+    }
+
     private static func packageAssetThumbnail(_ package: URL) -> CGImage? {
         guard let scene = try? LocalSceneSource.read(package) else { return nil }
         let candidates: [URL] = ([scene.assetURL] + scene.allNodes.map(\.assetURL)).compactMap { $0 }
         for url in candidates {
             if let thumb = listThumbnail(url) { return thumb }
             if ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) {
-                let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-                generator.appliesPreferredTrackTransform = true
-                generator.maximumSize = CGSize(width: 320, height: 180)
-                if let frame = try? generator.copyCGImage(at: CMTime(seconds: 0, preferredTimescale: 600), actualTime: nil) { return frame }
+                if let frame = videoThumbnail(url) { return frame }
             }
         }
         return proceduralThumbnail(scene)
@@ -2013,6 +2027,14 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                      "Package scenes use Studio, not raw-media adjustments")
         controller.updatePlayingURL(nil)
         precondition(controller.apply.title == "Set Wallpaper" && controller.apply.isEnabled)
+
+        let legacyURL = try controller.open(controller.selected!).url
+        let legacyBookmark = try legacyURL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let legacyEntry = SceneLibraryStore.Entry(id: "legacy-bookmark", title: "Legacy", bookmark: legacyBookmark)
+        let legacyAccess = try controller.store.access(legacyEntry)
+        precondition(legacyAccess.url.standardizedFileURL == legacyURL.standardizedFileURL,
+                     "Regular bookmarks from older imports must remain readable")
+        legacyAccess.close()
 
         let duplicateRequest = Item(id: "smoke.shared-thumbnail", title: "Undertow", builtin: controller.selected!.builtin, entry: nil)
         let jobsBefore = controller.thumbnailJobsStarted

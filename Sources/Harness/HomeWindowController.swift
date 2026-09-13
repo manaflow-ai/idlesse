@@ -892,7 +892,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 SceneLibraryController.displayTitle($0.deletingPathExtension().lastPathComponent)
             } ?? "None"
         }
-        let displayedTitle = wallpaper.sameWallpaperOnAllDisplays ? title : assignments.joined(separator: " | ")
+        let distinctTitles = assignments.reduce(into: [String]()) { values, value in
+            if !values.contains(value) { values.append(value) }
+        }
+        let displayedTitle = wallpaper.sameWallpaperOnAllDisplays ? title : distinctTitles.joined(separator: " · ")
         if nowPlayingTitle.stringValue != displayedTitle { nowPlayingTitle.stringValue = displayedTitle }
         nowPlayingTitle.toolTip = wallpaper.sameWallpaperOnAllDisplays ? title : zip(screens, assignments).map { "\($0.0.localizedName): \($0.1)" }.joined(separator: "\n")
         let standardized = url?.standardizedFileURL
