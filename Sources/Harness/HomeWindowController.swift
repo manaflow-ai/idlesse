@@ -159,7 +159,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebar.backgroundColor = .clear
         sidebar.selectionHighlightStyle = .regular
         sidebar.headerView = nil
-        sidebar.rowHeight = 28
+        sidebar.rowHeight = 34
         sidebar.allowsEmptySelection = false
         sidebar.delegate = self
         sidebar.dataSource = self
@@ -172,7 +172,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let sidebarRoot = NSView()
         sidebarController.view = sidebarRoot
         sidebarRoot.wantsLayer = true
-        sidebarRoot.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        sidebarRoot.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
         let settings = NSButton(title: "Settings…", target: self, action: #selector(openPreferences))
         settings.bezelStyle = .inline
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
@@ -185,7 +185,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             sidebarRoot.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.topAnchor),
+            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 10),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
             sidebarScroll.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -8),
@@ -218,6 +218,15 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         libraryView.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(libraryView)
+        let junction = LibrarySurfaceJunction()
+        junction.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(junction)
+        NSLayoutConstraint.activate([
+            junction.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            junction.topAnchor.constraint(equalTo: contentHost.safeAreaLayoutGuide.topAnchor),
+            junction.widthAnchor.constraint(equalToConstant: 26),
+            junction.heightAnchor.constraint(equalToConstant: 26),
+        ])
         NSLayoutConstraint.activate([
             libraryView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             libraryView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
@@ -295,7 +304,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         cell.textField = text
         cell.imageView = image
         NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 16),
             image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             image.widthAnchor.constraint(equalToConstant: 16),
             image.heightAnchor.constraint(equalToConstant: 16),
@@ -537,6 +546,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
+        nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         labels.widthAnchor.constraint(equalToConstant: 170).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
@@ -757,5 +767,24 @@ private final class LibraryNavigationRow: NSTableRowView {
         guard isSelected else { return }
         NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.12 : 0.07).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
+    }
+}
+
+/// The sidebar surface turns into the header around the content's upper corner.
+/// Decorative only: it never intercepts clicks or participates in accessibility.
+private final class LibrarySurfaceJunction: NSView {
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        let radius = min(bounds.width, bounds.height)
+        let path = NSBezierPath()
+        path.move(to: .zero)
+        path.line(to: NSPoint(x: radius, y: 0))
+        path.curve(to: NSPoint(x: 0, y: radius),
+                   controlPoint1: NSPoint(x: radius * 0.448, y: 0),
+                   controlPoint2: NSPoint(x: 0, y: radius * 0.448))
+        path.close()
+        NSColor.underPageBackgroundColor.setFill()
+        path.fill()
     }
 }
