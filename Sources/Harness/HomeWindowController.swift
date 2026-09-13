@@ -62,7 +62,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private weak var navigationSplit: NSSplitView?
     private var refreshTimer: Timer?
 
-    private let nowPlayingButton = LibraryHoverButton(title: "No Wallpaper", target: nil, action: nil)
+    private let nowPlayingTitle = NSTextField(labelWithString: "No Wallpaper")
     private let destinationLabel = NSTextField(labelWithString: "")
     private let previousButton = LibraryHoverButton(frame: .zero)
     private let playerBackdrop = WallpaperHeaderArtwork()
@@ -569,25 +569,21 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     private func makePlayerItem(_ itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        nowPlayingButton.isBordered = false
-        nowPlayingButton.target = self
-        nowPlayingButton.action = nil
-        nowPlayingButton.imagePosition = .noImage
-        nowPlayingButton.alignment = .left
-        nowPlayingButton.toolTip = "Current wallpaper and playback options"
-        nowPlayingButton.font = .systemFont(ofSize: 13, weight: .semibold)
-        nowPlayingButton.contentTintColor = .white
-        (nowPlayingButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
-        destinationLabel.font = .systemFont(ofSize: 11)
-        destinationLabel.textColor = .secondaryLabelColor
-        destinationLabel.lineBreakMode = .byTruncatingTail
-
-        let labels = NSStackView(views: [nowPlayingButton])
-        labels.orientation = .vertical
-        labels.alignment = .leading
-        labels.spacing = 0
-        nowPlayingButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        labels.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
+        nowPlayingTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        nowPlayingTitle.textColor = .white
+        nowPlayingTitle.lineBreakMode = .byTruncatingTail
+        nowPlayingTitle.maximumNumberOfLines = 1
+        nowPlayingTitle.setAccessibilityLabel("Current wallpaper")
+        nowPlayingTitle.translatesAutoresizingMaskIntoConstraints = false
+        let labels = NSView()
+        labels.addSubview(nowPlayingTitle)
+        NSLayoutConstraint.activate([
+            labels.widthAnchor.constraint(equalToConstant: 156),
+            labels.heightAnchor.constraint(equalToConstant: 32),
+            nowPlayingTitle.leadingAnchor.constraint(equalTo: labels.leadingAnchor, constant: 4),
+            nowPlayingTitle.trailingAnchor.constraint(equalTo: labels.trailingAnchor, constant: -4),
+            nowPlayingTitle.centerYAnchor.constraint(equalTo: labels.centerYAnchor),
+        ])
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
@@ -688,7 +684,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 artwork?.image = image
             }
         }
-        let title = NSTextField(labelWithString: nowPlayingButton.title)
+        let title = NSTextField(labelWithString: nowPlayingTitle.stringValue)
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         let destination = NSTextField(labelWithString: destinationLabel.stringValue)
         destination.textColor = .secondaryLabelColor
@@ -731,7 +727,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         nowPlayingPopover = popover
         refreshPlaybackPopover = { [weak self, weak popover, weak title, weak destination, weak pause, weak stop, weak sound, weak controls, weak artwork] in
             guard let self, let popover, popover.isShown else { return }
-            title?.stringValue = self.nowPlayingButton.title
+            title?.stringValue = self.nowPlayingTitle.stringValue
             if self.wallpaper.selectedURL != artworkURL, let url = self.wallpaper.selectedURL {
                 artworkURL = url
                 self.library.requestPlaybackArtwork(url) { [weak self, weak artwork] image in
@@ -749,7 +745,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             controls?.isHidden = !self.wallpaper.hasSceneControls
             popover.contentSize = NSSize(width: 360, height: self.wallpaper.hasSceneControls ? 350 : 320)
         }
-        popover.show(relativeTo: nowPlayingButton.bounds, of: nowPlayingButton, preferredEdge: .maxY)
+        popover.show(relativeTo: nowPlayingTitle.bounds, of: nowPlayingTitle, preferredEdge: .maxY)
     }
 
     @objc private func togglePopoverPause(_ sender: NSButton) {
@@ -782,8 +778,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 SceneLibraryController.displayTitle($0.deletingPathExtension().lastPathComponent)
             } ?? "None"
         }
-        nowPlayingButton.title = wallpaper.sameWallpaperOnAllDisplays ? title : assignments.joined(separator: " | ")
-        nowPlayingButton.toolTip = wallpaper.sameWallpaperOnAllDisplays ? "Shared wallpaper · playback options" : zip(screens, assignments).map { "\($0.0.localizedName): \($0.1)" }.joined(separator: "\n")
+        let displayedTitle = wallpaper.sameWallpaperOnAllDisplays ? title : assignments.joined(separator: " | ")
+        if nowPlayingTitle.stringValue != displayedTitle { nowPlayingTitle.stringValue = displayedTitle }
+        nowPlayingTitle.toolTip = wallpaper.sameWallpaperOnAllDisplays ? title : zip(screens, assignments).map { "\($0.0.localizedName): \($0.1)" }.joined(separator: "\n")
         let standardized = url?.standardizedFileURL
         if standardized != cachedThumbnailURL {
             cachedThumbnailURL = standardized
