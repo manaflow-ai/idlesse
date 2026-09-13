@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import AVFoundation
 
 /// Primary Idlesse window. Library keeps ownership of its original NSWindow;
 /// Home wraps Library content inside that same window and never reparents it
@@ -64,6 +65,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private let nowPlayingButton = NSButton(title: "No Wallpaper", target: nil, action: nil)
     private let destinationLabel = NSTextField(labelWithString: "")
     private let previousButton = NSButton(frame: .zero)
+    private let playerBackdrop = WallpaperHeaderArtwork()
+    private let playerHeader = NSView()
+    private var audioProbe: Task<Void, Never>?
     private let playerArtwork = NSImageView()
     private let playerSound = NSButton(frame: .zero)
     private let pauseButton = NSButton(frame: .zero)
@@ -222,10 +226,39 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         libraryView.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(libraryView)
+        playerHeader.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(playerHeader)
+        playerBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        playerHeader.addSubview(playerBackdrop)
+        let strip = makePlayerItem(Self.nowPlayingItem).view!
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        let glass = NSVisualEffectView()
+        glass.material = .hudWindow
+        glass.blendingMode = .withinWindow
+        glass.state = .active
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        playerHeader.addSubview(glass)
+        glass.addSubview(strip)
+        NSLayoutConstraint.activate([
+            playerHeader.topAnchor.constraint(equalTo: contentHost.safeAreaLayoutGuide.topAnchor),
+            playerHeader.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            playerHeader.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            playerHeader.heightAnchor.constraint(equalToConstant: 150),
+            playerBackdrop.topAnchor.constraint(equalTo: playerHeader.topAnchor),
+            playerBackdrop.bottomAnchor.constraint(equalTo: playerHeader.bottomAnchor),
+            playerBackdrop.trailingAnchor.constraint(equalTo: playerHeader.trailingAnchor),
+            playerBackdrop.leadingAnchor.constraint(equalTo: playerHeader.leadingAnchor),
+            glass.leadingAnchor.constraint(equalTo: playerHeader.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: playerHeader.trailingAnchor),
+            glass.bottomAnchor.constraint(equalTo: playerHeader.bottomAnchor),
+            strip.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 12),
+            strip.topAnchor.constraint(equalTo: glass.topAnchor, constant: 6),
+            strip.bottomAnchor.constraint(equalTo: glass.bottomAnchor, constant: -6),
+        ])
         NSLayoutConstraint.activate([
             libraryView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             libraryView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            libraryView.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            libraryView.topAnchor.constraint(equalTo: playerHeader.bottomAnchor),
             libraryView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
         ])
     }
@@ -484,11 +517,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -533,13 +566,17 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             return item
         }
         guard itemIdentifier == Self.nowPlayingItem else { return nil }
+        return makePlayerItem(itemIdentifier)
+    }
+
+    private func makePlayerItem(_ itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem {
         nowPlayingButton.isBordered = false
         nowPlayingButton.target = self
         nowPlayingButton.action = nil
         nowPlayingButton.imagePosition = .noImage
         nowPlayingButton.alignment = .left
         nowPlayingButton.toolTip = "Current wallpaper and playback options"
-        nowPlayingButton.font = .systemFont(ofSize: 13, weight: .medium)
+        nowPlayingButton.font = .systemFont(ofSize: 18, weight: .semibold)
         (nowPlayingButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         destinationLabel.font = .systemFont(ofSize: 11)
         destinationLabel.textColor = .secondaryLabelColor
@@ -549,7 +586,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
-        nowPlayingButton.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        nowPlayingButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
         labels.widthAnchor.constraint(equalToConstant: 154).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
@@ -718,6 +755,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let standardized = url?.standardizedFileURL
         if standardized != cachedThumbnailURL {
             cachedThumbnailURL = standardized
+            audioProbe?.cancel()
+            playerSound.isHidden = true
+            playerBackdrop.image = nil
+            if let url {
+                audioProbe = Task { @MainActor [weak self] in
+                    let tracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+                    guard !Task.isCancelled, self?.cachedThumbnailURL == url.standardizedFileURL else { return }
+                    self?.playerSound.isHidden = tracks?.isEmpty != false
+                }
+            }
             cachedThumbnail = thumbnail(for: url)
             if let url {
                 library.requestPlaybackArtwork(url) { [weak self] image in
@@ -728,6 +775,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                     artwork.unlockFocus()
                     self.cachedThumbnail = artwork
                     self.playerArtwork.image = artwork
+                    self.playerBackdrop.image = image
                 }
             }
         }
@@ -839,5 +887,23 @@ private final class LibraryNavigationRow: NSTableRowView {
         guard isSelected else { return }
         NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.12 : 0.07).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
+    }
+}
+
+/// A panoramic crop with a readable leading edge, independent of desktop playback.
+private final class WallpaperHeaderArtwork: NSView {
+    var image: NSImage? { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        NSBezierPath(rect: bounds).addClip()
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        guard let image, image.size.width > 0, image.size.height > 0 else { return }
+        let scale = max(bounds.width / image.size.width, bounds.height / image.size.height)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        image.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
+                             width: size.width, height: size.height))
+        NSGradient(colors: [NSColor.windowBackgroundColor.withAlphaComponent(0.96),
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.55),
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.12)])?.draw(in: bounds, angle: 0)
     }
 }
