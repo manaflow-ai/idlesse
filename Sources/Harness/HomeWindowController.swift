@@ -226,39 +226,19 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         libraryView.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(libraryView)
-        playerHeader.translatesAutoresizingMaskIntoConstraints = false
-        contentHost.addSubview(playerHeader)
         playerBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        playerHeader.addSubview(playerBackdrop)
-        let strip = makePlayerItem(Self.nowPlayingItem).view!
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        let glass = NSVisualEffectView()
-        glass.material = .hudWindow
-        glass.blendingMode = .withinWindow
-        glass.state = .active
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        playerHeader.addSubview(glass)
-        glass.addSubview(strip)
+        contentHost.addSubview(playerBackdrop, positioned: .below, relativeTo: libraryView)
+        libraryView.layer?.backgroundColor = NSColor.clear.cgColor
         NSLayoutConstraint.activate([
-            playerHeader.topAnchor.constraint(equalTo: contentHost.safeAreaLayoutGuide.topAnchor),
-            playerHeader.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
-            playerHeader.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            playerHeader.heightAnchor.constraint(equalToConstant: 150),
-            playerBackdrop.topAnchor.constraint(equalTo: playerHeader.topAnchor),
-            playerBackdrop.bottomAnchor.constraint(equalTo: playerHeader.bottomAnchor),
-            playerBackdrop.trailingAnchor.constraint(equalTo: playerHeader.trailingAnchor),
-            playerBackdrop.leadingAnchor.constraint(equalTo: playerHeader.leadingAnchor),
-            glass.leadingAnchor.constraint(equalTo: playerHeader.leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: playerHeader.trailingAnchor),
-            glass.bottomAnchor.constraint(equalTo: playerHeader.bottomAnchor),
-            strip.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 12),
-            strip.topAnchor.constraint(equalTo: glass.topAnchor, constant: 6),
-            strip.bottomAnchor.constraint(equalTo: glass.bottomAnchor, constant: -6),
+            playerBackdrop.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            playerBackdrop.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+            playerBackdrop.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            playerBackdrop.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
         ])
         NSLayoutConstraint.activate([
             libraryView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             libraryView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            libraryView.topAnchor.constraint(equalTo: playerHeader.bottomAnchor),
+            libraryView.topAnchor.constraint(equalTo: contentHost.topAnchor),
             libraryView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
         ])
     }
@@ -517,11 +497,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -587,7 +567,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.alignment = .leading
         labels.spacing = 0
         nowPlayingButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        labels.widthAnchor.constraint(equalToConstant: 154).isActive = true
+        labels.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
@@ -604,7 +584,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         divider.boxType = .separator
         divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
         divider.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        let controls = NSStackView(views: [playerArtwork, labels, transport, divider, playerSound])
+        let controls = NSStackView(views: [labels, transport, playerSound])
         controls.spacing = 10
         controls.alignment = .centerY
         controls.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 8)
@@ -794,9 +774,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if let rotation = rotationSummary() { parts.append(rotation) }
         destinationLabel.stringValue = parts.joined(separator: " · ")
         if parts.isEmpty {
-            destinationLabel.stringValue = url == nil ? "Choose a wallpaper" : (wallpaper.pausedByUser ? "Paused" : "On Desktop")
+            destinationLabel.stringValue = url == nil ? "Choose a wallpaper" : (wallpaper.pausedByUser ? "Paused" : "")
         }
-        destinationLabel.isHidden = false
+        destinationLabel.isHidden = destinationLabel.stringValue.isEmpty
         playerSound.image = NSImage(systemSymbolName: wallpaper.soundEnabled ? "speaker.wave.2" : "speaker.slash", accessibilityDescription: "Wallpaper sound")
         playerSound.isEnabled = wallpaper.hasVideoContent
         playerSound.toolTip = wallpaper.soundEnabled ? "Mute wallpaper" : "Unmute wallpaper"
@@ -903,7 +883,7 @@ private final class WallpaperHeaderArtwork: NSView {
         image.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
                              width: size.width, height: size.height))
         NSGradient(colors: [NSColor.windowBackgroundColor.withAlphaComponent(0.96),
-                            NSColor.windowBackgroundColor.withAlphaComponent(0.55),
-                            NSColor.windowBackgroundColor.withAlphaComponent(0.12)])?.draw(in: bounds, angle: 0)
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.88),
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.78)])?.draw(in: bounds, angle: 0)
     }
 }
