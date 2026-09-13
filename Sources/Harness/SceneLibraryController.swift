@@ -473,10 +473,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let browserItem = NSSplitViewItem(viewController: browserController)
         browserItem.minimumThickness = 420
         let inspectorController = NSViewController()
-        let inspector = NSVisualEffectView()
-        inspector.material = .contentBackground
-        inspector.blendingMode = .behindWindow
-        inspector.state = .followsWindowActiveState
+        let inspector = NSView()
+        inspector.wantsLayer = true
+        inspector.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300

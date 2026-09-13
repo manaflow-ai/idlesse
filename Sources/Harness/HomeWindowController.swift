@@ -257,7 +257,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        LibraryNavigationRow()
+        let view = LibraryNavigationRow()
+        view.acceptsHover = rows[row].selectable
+        return view
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -547,7 +549,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         nowPlayingButton.imagePosition = .noImage
         nowPlayingButton.alignment = .left
         nowPlayingButton.toolTip = "Current wallpaper and playback options"
-        nowPlayingButton.font = .systemFont(ofSize: 18, weight: .semibold)
+        nowPlayingButton.font = .systemFont(ofSize: 13, weight: .medium)
         (nowPlayingButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         destinationLabel.font = .systemFont(ofSize: 11)
         destinationLabel.textColor = .secondaryLabelColor
@@ -557,7 +559,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
-        nowPlayingButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        nowPlayingButton.heightAnchor.constraint(equalToConstant: 20).isActive = true
         labels.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
@@ -873,6 +875,26 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
 /// Neutral selection keeps navigation subordinate to the artwork.
 private final class LibraryNavigationRow: NSTableRowView {
+    var acceptsHover = true
+    private var hoverTracking: NSTrackingArea?
+    private var hovered = false { didSet { needsDisplay = true } }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let tracking = NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(tracking)
+        hoverTracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = acceptsHover }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard hovered, !isSelected else { return }
+        NSColor.labelColor.withAlphaComponent(0.055).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
+    }
+
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
