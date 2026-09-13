@@ -531,7 +531,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
             configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
             configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
-            let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
+            pauseButton.wantsLayer = true
+        pauseButton.layer?.cornerRadius = 8
+        pauseButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        for button in [previousButton, pauseButton, nextButton] { button.contentTintColor = .white }
+        let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
             transport.spacing = 4
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = transport
@@ -549,7 +553,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         nowPlayingButton.imagePosition = .noImage
         nowPlayingButton.alignment = .left
         nowPlayingButton.toolTip = "Current wallpaper and playback options"
-        nowPlayingButton.font = .systemFont(ofSize: 13, weight: .medium)
+        nowPlayingButton.font = .systemFont(ofSize: 13, weight: .semibold)
+        nowPlayingButton.contentTintColor = .white
         (nowPlayingButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
         destinationLabel.font = .systemFont(ofSize: 11)
         destinationLabel.textColor = .secondaryLabelColor
@@ -571,6 +576,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         playerArtwork.layer?.masksToBounds = true
         playerArtwork.widthAnchor.constraint(equalToConstant: 32).isActive = true
         playerArtwork.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        pauseButton.wantsLayer = true
+        pauseButton.layer?.cornerRadius = 8
+        pauseButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        for button in [previousButton, pauseButton, nextButton] { button.contentTintColor = .white }
         let transport = NSStackView(views: [previousButton, pauseButton, nextButton])
         transport.spacing = 0
         let divider = NSBox()
@@ -891,14 +900,14 @@ private final class LibraryNavigationRow: NSTableRowView {
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
         guard hovered, !isSelected else { return }
-        NSColor.labelColor.withAlphaComponent(0.055).setFill()
+        NSColor.systemPurple.withAlphaComponent(0.12).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
     }
 
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.12 : 0.07).setFill()
+        NSColor.systemPurple.withAlphaComponent(isEmphasized ? 0.24 : 0.14).setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
     }
 }
@@ -915,8 +924,8 @@ private final class WallpaperHeaderArtwork: NSView {
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
                              width: size.width, height: size.height))
-        NSGradient(colors: [NSColor.windowBackgroundColor.withAlphaComponent(0.96),
-                            NSColor.windowBackgroundColor.withAlphaComponent(0.88),
-                            NSColor.windowBackgroundColor.withAlphaComponent(0.78)])?.draw(in: bounds, angle: 0)
+        NSGradient(colors: [NSColor.windowBackgroundColor.withAlphaComponent(0.78),
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.62),
+                            NSColor.windowBackgroundColor.withAlphaComponent(0.40)])?.draw(in: bounds, angle: 0)
     }
 }

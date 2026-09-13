@@ -322,6 +322,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         sourceActions.addItem(withTitle: "Sources…")
         sourceActions.target = self
         sourceActions.action = #selector(sourceAction)
+        viewModeControl.selectedSegmentBezelColor = NSColor.systemPurple
         viewModeControl.target = self
         viewModeControl.action = #selector(viewModeChanged)
         viewModeControl.selectedSegment = (UserDefaults.standard.object(forKey: "Idlesse.library.viewMode") as? Int) ?? 1
@@ -330,10 +331,13 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         mediaFilter.target = self
         mediaFilter.action = #selector(mediaFilterChanged)
         for popup in [mediaFilter, sort] {
-            popup.bezelStyle = .inline
+            popup.bezelStyle = .rounded
+            popup.isBordered = false
+            popup.font = .systemFont(ofSize: 13, weight: .regular)
             (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
         }
-        libraryActions.bezelStyle = .inline
+        libraryActions.isBordered = false
+        libraryActions.font = .systemFont(ofSize: 13, weight: .regular)
         viewModeControl.setLabel("", forSegment: 0)
         viewModeControl.setLabel("", forSegment: 1)
         viewModeControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List"), forSegment: 0)

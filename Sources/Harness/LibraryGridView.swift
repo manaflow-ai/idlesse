@@ -409,7 +409,7 @@ final class LibraryCardView: NSView {
 
     private func updateBorder() {
         if isSelected {
-            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.55).cgColor
+            layer?.borderColor = NSColor(calibratedRed: 0.70, green: 0.62, blue: 0.94, alpha: 0.85).cgColor
             layer?.borderWidth = 2
         } else {
             layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
