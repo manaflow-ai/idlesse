@@ -311,7 +311,7 @@ final class LibraryCardView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
 
         thumbnailView.imageScaling = .scaleProportionallyUpOrDown
         thumbnailView.wantsLayer = true
@@ -413,7 +413,7 @@ final class LibraryCardView: NSView {
             layer?.borderWidth = 2
         } else {
             layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-            layer?.borderWidth = 1
+            layer?.borderWidth = 0
         }
     }
 

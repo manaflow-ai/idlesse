@@ -480,11 +480,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -500,7 +500,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         }
         if itemIdentifier == Self.sidebarToggleItem {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
+            let button = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!, target: self, action: #selector(toggleSidebar))
+            button.isBordered = false
+            item.view = button
             item.label = "Sidebar"
             item.target = self
             item.action = #selector(toggleSidebar)
@@ -750,8 +752,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         precondition(home.window.toolbar != nil)
         precondition(!home.window.toolbar!.items.map(\.itemIdentifier).contains(Self.settingsItem))
         let searchItem = home.window.toolbar!.items.first { $0.itemIdentifier == Self.searchItem }
-        precondition(searchItem is NSSearchToolbarItem)
-        precondition(home.window.toolbar!.items.contains { $0.itemIdentifier == Self.importItem })
+        precondition(searchItem == nil, "Search belongs in Library content")
+        precondition(!home.window.toolbar!.items.contains { $0.itemIdentifier == Self.importItem })
         var openedSettings = false
         wallpaper.onShowSettings = { openedSettings = true }
         home.openPreferences()

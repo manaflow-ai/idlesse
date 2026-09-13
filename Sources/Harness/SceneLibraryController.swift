@@ -24,7 +24,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var homeNavigation = false
     var onScopeChange: ((Scope) -> Void)?
     private let mediaFilter = NSPopUpButton()
-    private let importButton = NSButton(title: "Import…", target: nil, action: nil)
+    private let importButton = NSButton(title: "Add Wallpapers…", target: nil, action: nil)
 
     /// Home owns the toolbar, while Library retains the search query and import actions.
     func makeSearchToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
@@ -341,8 +341,16 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         inspectorButton.toolTip = inspectorButton.state == .on ? "Hide Inspector" : "Show Inspector"
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let toolbar = NSStackView(views: [search, filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
+        let searchRow = NSStackView(views: [search, importButton])
+        searchRow.spacing = 12
+        let browsingRow = NSStackView(views: [filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer])
+        browsingRow.spacing = 10
+        let toolbar = NSStackView(views: [searchRow, browsingRow])
+        toolbar.orientation = .vertical
+        toolbar.alignment = .leading
         toolbar.spacing = 10
+        searchRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
+        browsingRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
         column.width = 280
         column.resizingMask = .autoresizingMask
@@ -399,7 +407,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         poster.imageScaling = .scaleProportionallyUpOrDown
         poster.wantsLayer = true
         poster.layer?.backgroundColor = NSColor.black.cgColor
-        poster.layer?.cornerRadius = 10
+        poster.layer?.cornerRadius = 0
         titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
         detail.textColor = .secondaryLabelColor
         favorite.target = self; favorite.action = #selector(toggleFavorite)
@@ -446,7 +454,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let browserItem = NSSplitViewItem(viewController: browserController)
         browserItem.minimumThickness = 420
         let inspectorController = NSViewController()
-        let inspector = NSView()
+        let inspector = NSVisualEffectView()
+        inspector.material = .sidebar
+        inspector.blendingMode = .behindWindow
+        inspector.state = .followsWindowActiveState
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300
