@@ -73,6 +73,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private let pauseButton = LibraryHoverButton(frame: .zero)
     private let nextButton = LibraryHoverButton(frame: .zero)
     private var nowPlayingPopover: NSPopover?
+    private var aboutPopover: NSPopover?
     private var refreshPlaybackPopover: (() -> Void)?
     private var cachedThumbnailURL: URL?
     private var cachedThumbnail: NSImage?
@@ -201,7 +202,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let footerLine = NSView()
         footerLine.wantsLayer = true
         footerLine.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.07).cgColor
-        let about = LibraryHoverButton(title: "", target: self, action: #selector(openAbout))
+        let about = LibraryHoverButton(title: "", target: self, action: #selector(openAbout(_:)))
         about.isBordered = false
         about.bezelStyle = .regularSquare
         let appIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath).copy() as! NSImage
@@ -691,8 +692,75 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     @objc private func previousWallpaper() { library.cycle(delta: -1, from: wallpaper.selectedURL); refreshState() }
     @objc private func nextWallpaper() { library.cycle(delta: 1, from: wallpaper.selectedURL); refreshState() }
-    @objc private func openAbout() {
-        NSApp.orderFrontStandardAboutPanel(nil)
+    @objc private func openAbout(_ sender: NSButton) {
+        if aboutPopover?.isShown == true { aboutPopover?.close(); return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let controller = NSViewController()
+        let content = NSView()
+        controller.view = content
+        let icon = NSImageView()
+        icon.image = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        icon.imageScaling = .scaleProportionallyDown
+        icon.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        let name = NSTextField(labelWithString: "Idlesse")
+        name.font = .systemFont(ofSize: 16, weight: .semibold)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        let versionLabel = NSTextField(labelWithString: "Version \(version) (\(build))")
+        versionLabel.font = .systemFont(ofSize: 12)
+        versionLabel.textColor = .secondaryLabelColor
+        let identity = NSStackView(views: [name, versionLabel])
+        identity.orientation = .vertical
+        identity.alignment = .leading
+        identity.spacing = 3
+        let header = NSStackView(views: [icon, identity])
+        header.spacing = 10
+        header.alignment = .centerY
+        let description = NSTextField(wrappingLabelWithString: "A little life for your desktop. Made by Leo.")
+        description.font = .systemFont(ofSize: 12)
+        description.textColor = .secondaryLabelColor
+        let releases = LibraryHoverButton(title: "Releases & updates", target: self, action: #selector(openAppReleases))
+        let repository = LibraryHoverButton(title: "Source code on GitHub", target: self, action: #selector(openAppRepository))
+        for button in [releases, repository] {
+            button.isBordered = false
+            button.bezelStyle = .regularSquare
+            button.font = .systemFont(ofSize: 13)
+            button.alignment = .left
+            button.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)
+            button.imagePosition = .imageTrailing
+            button.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        }
+        let stack = NSStackView(views: [header, description, releases, repository])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            description.widthAnchor.constraint(equalToConstant: 236),
+            releases.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            repository.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        popover.contentViewController = controller
+        popover.contentSize = NSSize(width: 268, height: 204)
+        aboutPopover = popover
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    @objc private func openAppReleases() {
+        aboutPopover?.close()
+        NSWorkspace.shared.open(URL(string: "https://github.com/teamleaderleo/idlesse/releases")!)
+    }
+
+    @objc private func openAppRepository() {
+        aboutPopover?.close()
+        NSWorkspace.shared.open(URL(string: "https://github.com/teamleaderleo/idlesse")!)
     }
 
     @objc private func openPreferences() { wallpaper.onShowSettings?() }
