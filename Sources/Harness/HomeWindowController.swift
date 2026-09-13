@@ -552,7 +552,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
         configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
         configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
-        let controls = NSStackView(views: [previousButton, pauseButton, nextButton, labels])
+        let controls = NSStackView(views: [labels, previousButton, pauseButton, nextButton])
         controls.spacing = 10
         controls.alignment = .centerY
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -583,11 +583,25 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         nowPlayingPopover?.close()
         let popover = NSPopover()
         let controller = NSViewController()
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: wallpaper.hasSceneControls ? 180 : 142))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: wallpaper.hasSceneControls ? 350 : 320))
+        let artwork = NSImageView()
+        artwork.imageScaling = .scaleProportionallyUpOrDown
+        artwork.wantsLayer = true
+        artwork.layer?.cornerRadius = 10
+        artwork.layer?.masksToBounds = true
+        artwork.image = cachedThumbnail
+        var artworkURL = wallpaper.selectedURL
+        if let artworkURL {
+            library.requestPlaybackArtwork(artworkURL) { [weak self, weak artwork] image in
+                guard self?.wallpaper.selectedURL == artworkURL else { return }
+                artwork?.image = image
+            }
+        }
         let title = NSTextField(labelWithString: nowPlayingButton.title)
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         let destination = NSTextField(labelWithString: destinationLabel.stringValue)
         destination.textColor = .secondaryLabelColor
+        destination.isHidden = destination.stringValue.isEmpty
         let stop = NSButton(title: "Stop", target: self, action: #selector(stopWallpaper))
         stop.bezelStyle = .rounded
         stop.isEnabled = wallpaper.selectedURL != nil
@@ -598,34 +612,51 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sound.isEnabled = wallpaper.hasVideoContent
         let controls = NSButton(title: "Scene Controls…", target: self, action: #selector(openSceneControls))
         controls.isHidden = !wallpaper.hasSceneControls
-        let playback = NSStackView(views: [pause, stop])
+        pause.isBordered = false
+        stop.isBordered = false
+        let previous = NSButton(image: NSImage(systemSymbolName: "backward.end.fill", accessibilityDescription: "Previous wallpaper")!, target: self, action: #selector(previousWallpaper))
+        let next = NSButton(image: NSImage(systemSymbolName: "forward.end.fill", accessibilityDescription: "Next wallpaper")!, target: self, action: #selector(nextWallpaper))
+        previous.isBordered = false
+        next.isBordered = false
+        let playback = NSStackView(views: [previous, pause, next, NSView(), stop])
         playback.spacing = 8
-        let stack = NSStackView(views: [title, destination, playback, sound, controls])
+        let stack = NSStackView(views: [artwork, title, destination, playback, sound, controls])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            artwork.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            artwork.heightAnchor.constraint(equalToConstant: 184),
+            playback.widthAnchor.constraint(equalTo: stack.widthAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
         ])
         controller.view = container
         popover.contentViewController = controller
         popover.behavior = .transient
         nowPlayingPopover = popover
-        refreshPlaybackPopover = { [weak self, weak popover, weak title, weak destination, weak pause, weak stop, weak sound, weak controls] in
+        refreshPlaybackPopover = { [weak self, weak popover, weak title, weak destination, weak pause, weak stop, weak sound, weak controls, weak artwork] in
             guard let self, let popover, popover.isShown else { return }
             title?.stringValue = self.nowPlayingButton.title
+            if self.wallpaper.selectedURL != artworkURL, let url = self.wallpaper.selectedURL {
+                artworkURL = url
+                self.library.requestPlaybackArtwork(url) { [weak self, weak artwork] image in
+                    guard self?.wallpaper.selectedURL == url else { return }
+                    artwork?.image = image
+                }
+            }
             destination?.stringValue = self.destinationLabel.stringValue
+            destination?.isHidden = self.destinationLabel.stringValue.isEmpty
             pause?.title = self.wallpaper.pausedByUser ? "Resume" : "Pause"
             pause?.isEnabled = self.wallpaper.canPausePlayback
             stop?.isEnabled = self.wallpaper.selectedURL != nil
             sound?.state = self.wallpaper.soundEnabled ? .on : .off
             sound?.isEnabled = self.wallpaper.hasVideoContent
             controls?.isHidden = !self.wallpaper.hasSceneControls
-            popover.contentSize = NSSize(width: 320, height: self.wallpaper.hasSceneControls ? 180 : 142)
+            popover.contentSize = NSSize(width: 360, height: self.wallpaper.hasSceneControls ? 350 : 320)
         }
         popover.show(relativeTo: nowPlayingButton.bounds, of: nowPlayingButton, preferredEdge: .maxY)
     }
