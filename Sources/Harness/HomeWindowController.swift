@@ -198,9 +198,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         settings.widthAnchor.constraint(equalToConstant: 28).isActive = true
         settings.heightAnchor.constraint(equalToConstant: 28).isActive = true
         settings.contentTintColor = .secondaryLabelColor
-        let divider = NSBox()
-        divider.boxType = .separator
-        for view in [sidebarScroll, divider, settings] {
+        for view in [sidebarScroll, settings] {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebarRoot.addSubview(view)
         }
@@ -208,11 +206,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 2),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
-            sidebarScroll.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -8),
-            divider.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 12),
-            divider.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -12),
-            divider.bottomAnchor.constraint(equalTo: settings.topAnchor, constant: -10),
-            settings.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 8),
+            sidebarScroll.bottomAnchor.constraint(equalTo: settings.topAnchor, constant: -8),
+            settings.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -8),
             settings.bottomAnchor.constraint(equalTo: sidebarRoot.bottomAnchor, constant: -12),
         ])
         let sidebarItem = NSSplitViewItem(viewController: sidebarController)
