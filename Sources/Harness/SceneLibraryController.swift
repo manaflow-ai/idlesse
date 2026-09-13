@@ -113,6 +113,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let dismissStatus = NSButton(title: "Dismiss", target: nil, action: nil)
     private let taskStatusRow = NSStackView()
     private var browserBottom: NSLayoutConstraint?
+    private let desktopStatus = NSTextField(labelWithString: "✓ On Desktop")
     private var playingURL: URL?
     func updatePlayingURL(_ url: URL?) {
         let next = url?.standardizedFileURL
@@ -127,6 +128,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         } else { isPlaying = false }
         apply.title = isPlaying ? "On Desktop" : "Set Wallpaper"
         apply.isEnabled = selected != nil && !isPlaying
+        apply.isHidden = isPlaying
+        desktopStatus.isHidden = !isPlaying
     }
     private var previewObservers: [NSObjectProtocol] = []
     private let titleLabel = NSTextField(labelWithString: "Choose a wallpaper")
@@ -415,7 +418,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         livePreviewButton.action = #selector(toggleLivePreview)
         livePreviewButton.bezelStyle = .rounded
         livePreviewButton.toolTip = "Play a muted preview here without changing the desktop"
-        let playbackActions = NSStackView(views: [apply, livePreviewButton])
+        desktopStatus.textColor = .secondaryLabelColor
+        desktopStatus.font = .systemFont(ofSize: 12, weight: .medium)
+        desktopStatus.isHidden = true
+        let playbackActions = NSStackView(views: [desktopStatus, apply, livePreviewButton])
         playbackActions.spacing = 8
         let editingActions = NSStackView(views: [adjust, more])
         let studioActions = NSStackView(views: [edit])

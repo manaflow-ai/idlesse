@@ -155,7 +155,9 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebarScroll.autohidesScrollers = true
         sidebarScroll.drawsBackground = false
         sidebarScroll.documentView = sidebar
-        sidebar.style = .sourceList
+        sidebar.style = .plain
+        sidebar.backgroundColor = .clear
+        sidebar.selectionHighlightStyle = .regular
         sidebar.headerView = nil
         sidebar.rowHeight = 28
         sidebar.allowsEmptySelection = false
@@ -169,6 +171,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let sidebarController = NSViewController()
         let sidebarRoot = NSView()
         sidebarController.view = sidebarRoot
+        sidebarRoot.wantsLayer = true
+        sidebarRoot.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         let settings = NSButton(title: "Settings…", target: self, action: #selector(openPreferences))
         settings.bezelStyle = .inline
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
@@ -191,7 +195,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             settings.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 16),
             settings.bottomAnchor.constraint(equalTo: sidebarRoot.bottomAnchor, constant: -12),
         ])
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
+        let sidebarItem = NSSplitViewItem(viewController: sidebarController)
         sidebarItem.minimumThickness = 180
         sidebarItem.maximumThickness = 260
         sidebarItem.canCollapse = true
@@ -245,6 +249,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        LibraryNavigationRow()
+    }
+
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
         guard rows.indices.contains(row) else { return false }
         if case .group = rows[row] { return true }
@@ -259,6 +267,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         guard rows.indices.contains(row) else { return nil }
         let entry = rows[row]
         let text = NSTextField(labelWithString: entry.title)
+        text.font = .systemFont(ofSize: 13)
         text.lineBreakMode = .byTruncatingTail
         if case .group = entry {
             text.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -448,6 +457,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     // MARK: - Now Playing
 
+    private static let sidebarToggleItem = NSToolbarItem.Identifier("Idlesse.Home.Sidebar")
     private static let searchItem = NSToolbarItem.Identifier("Idlesse.Home.Search")
     private static let importItem = NSToolbarItem.Identifier("Idlesse.Home.Import")
     private static let transportItem = NSToolbarItem.Identifier("Idlesse.Home.Transport")
@@ -467,11 +477,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, Self.transportItem, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, .sidebarTrackingSeparator, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -482,7 +492,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if itemIdentifier == Self.importItem {
             return library.makeImportToolbarItem(identifier: itemIdentifier)
         }
-        if itemIdentifier == .toggleSidebar {
+        if itemIdentifier == Self.sidebarToggleItem {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")
             item.label = "Sidebar"
@@ -527,8 +537,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 0
-        labels.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        let controls = NSStackView(views: [labels])
+        labels.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        configureTransport(previousButton, symbol: "backward.end.fill", label: "Previous wallpaper", action: #selector(previousWallpaper))
+        configureTransport(pauseButton, symbol: "pause.fill", label: "Pause wallpaper", action: #selector(togglePause))
+        configureTransport(nextButton, symbol: "forward.end.fill", label: "Next wallpaper", action: #selector(nextWallpaper))
+        let controls = NSStackView(views: [labels, previousButton, pauseButton, nextButton])
         controls.spacing = 7
         controls.alignment = .centerY
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -734,5 +747,15 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         precondition(home.currentRow == .displays && !home.displaysView.isHidden && home.libraryView.isHidden)
         home.showLibraryScope(.library)
         precondition(home.currentRow == .library && !home.libraryView.isHidden)
+    }
+}
+
+/// Neutral selection keeps navigation subordinate to the artwork.
+private final class LibraryNavigationRow: NSTableRowView {
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        NSColor.labelColor.withAlphaComponent(isEmphasized ? 0.12 : 0.07).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 2), xRadius: 6, yRadius: 6).fill()
     }
 }

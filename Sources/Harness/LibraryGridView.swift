@@ -409,8 +409,8 @@ final class LibraryCardView: NSView {
 
     private func updateBorder() {
         if isSelected {
-            layer?.borderColor = NSColor.controlAccentColor.cgColor
-            layer?.borderWidth = 2.5
+            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.55).cgColor
+            layer?.borderWidth = 2
         } else {
             layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
             layer?.borderWidth = 1
