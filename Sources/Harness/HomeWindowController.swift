@@ -186,7 +186,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             sidebarRoot.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 10),
+            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 2),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
             sidebarScroll.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -8),
@@ -474,7 +474,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
         window.toolbar = toolbar
-        window.toolbarStyle = .unified
+        window.toolbarStyle = .unifiedCompact
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
     }
