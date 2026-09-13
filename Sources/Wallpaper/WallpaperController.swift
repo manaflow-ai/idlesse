@@ -55,7 +55,6 @@ final class WallpaperSurface {
     private let renderer: SceneRenderer
     private let securityScope: WallpaperScopeLease?
     private var menuStrip: MenuBarStrip?
-    private var revealBacking: MenuBarStrip?
     var diagnostics: RendererDiagnostics { renderer.diagnostics }
     var presentedFrameCount: Int? { renderer.presentedFrameCount }
     var gpuTotals: (seconds: Double, frames: Int)? { renderer.gpuTotals }
@@ -115,6 +114,8 @@ final class WallpaperSurface {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 self.renderer.view.layer?.opacity = 1
+                self.window.isOpaque = true
+                self.window.backgroundColor = .black
                 CATransaction.commit()
             }
         }
@@ -123,13 +124,7 @@ final class WallpaperSurface {
             let strip = MenuBarStrip(screen: screen)
             menuStrip = strip
             strip.onDrawableCatchUp = { [weak metal] in metal?.refreshSceneTime() }
-            let backing = MenuBarStrip(screen: screen, desktopBacking: true)
-            revealBacking = backing
-            backing.onDrawableCatchUp = { [weak metal] in metal?.refreshSceneTime() }
-            metal.mirrorFrame = { [weak strip, weak backing] command, drawable in
-                strip?.copy(command: command, source: drawable)
-                backing?.copy(command: command, source: drawable)
-            }
+            metal.mirrorFrame = { [weak strip] command, drawable in strip?.copy(command: command, source: drawable) }
         }
         updateFrameRate()
     }
@@ -166,16 +161,8 @@ final class WallpaperSurface {
 
     func show(paused: Bool) {
         window.orderBack(nil)
-        menuStrip?.show()
-        revealBacking?.show()
+        menuStrip?.window.orderFront(nil)
         setPaused(paused)
-        renderer.refreshSceneTime()
-    }
-
-    func refreshDesktopPresentation() {
-        menuStrip?.show()
-        revealBacking?.show()
-        renderer.refreshSceneTime()
     }
 
     private(set) var pausedState = false
@@ -223,8 +210,6 @@ final class WallpaperSurface {
         (renderer as? MetalSceneRenderer)?.mirrorFrame = nil
         menuStrip?.window.close()
         menuStrip = nil
-        revealBacking?.window.close()
-        revealBacking = nil
         renderer.releaseResources()
         window.contentView = nil
         window.close()
@@ -1276,10 +1261,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         guard desktopReveal.begin() else { return }
         let started = ProcessInfo.processInfo.systemUptime
         coverageMonitor.reset()
-        for surface in surfaces {
-            surface.setCovered(false)
-            surface.refreshDesktopPresentation()
-        }
+        for surface in surfaces { surface.setCovered(false) }
         applySharedHubPause()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["1"]
@@ -1289,9 +1271,6 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.desktopReveal.complete(at: ProcessInfo.processInfo.systemUptime, succeeded: error == nil)
-                    if error == nil {
-                        self.surfaces.forEach { $0.refreshDesktopPresentation() }
-                    }
                     let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1000
                     NSLog("Idlesse desktop reveal dispatch completed in %.1f ms", elapsed)
                     if let error { self.showError(error.localizedDescription) }
@@ -1824,8 +1803,7 @@ private final class MenuBarStrip {
     private var acquiring = false
     private var recovery = MirrorFrameRecovery()
     private func requestDrawable() {
-        guard layer.device != nil, layer.drawableSize.width > 0, layer.drawableSize.height > 0,
-              !acquiring, readyDrawable == nil else { return }
+        guard !acquiring, readyDrawable == nil else { return }
         acquiring = true
         acquisition.async { [weak self, layer] in
             let drawable = autoreleasepool { layer.nextDrawable() }
@@ -1839,10 +1817,8 @@ private final class MenuBarStrip {
             }
         }
     }
-    init(screen: NSScreen, desktopBacking: Bool = false) {
-        // Show Desktop exposes a larger band than the menu bar. Mirror that band
-        // below desktop content, so it never covers application windows or menus.
-        height = desktopBacking ? ceil(screen.frame.height * 0.1) : max(NSStatusBar.system.thickness, screen.safeAreaInsets.top,
+    init(screen: NSScreen) {
+        height = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top,
             screen.frame.maxY - screen.visibleFrame.maxY)
         let frame = NSRect(x: screen.frame.minX, y: screen.frame.maxY - height,
             width: screen.frame.width, height: height)
@@ -1858,10 +1834,7 @@ private final class MenuBarStrip {
         window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
         window.setFrame(frame, display: false)
         window.isReleasedWhenClosed = false
-        if desktopBacking {
-            window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 2)
-        }
-        window.title = desktopBacking ? "Idlesse Live Desktop Backing" : "Idlesse Menu Strip Experiment"
+        window.title = "Idlesse Menu Strip Experiment"
         window.isOpaque = false
         window.backgroundColor = .clear
         layer.opacity = 0
@@ -1878,14 +1851,6 @@ private final class MenuBarStrip {
         view.layer = layer
         window.contentView = view
     }
-    func show() {
-        // Show Desktop can reorder auxiliary windows on only one display.
-        // Reassert the live strip without activating the app or its library.
-        window.orderFrontRegardless()
-        recovery.missedCopy()
-        requestDrawable()
-    }
-
     func copy(command: MTLCommandBuffer, source: CAMetalDrawable) {
         guard window.isVisible else { return }
         let texture = source.texture
@@ -1913,6 +1878,8 @@ private final class MenuBarStrip {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 self?.layer.opacity = 1
+                self?.window.isOpaque = true
+                self?.window.backgroundColor = .black
                 CATransaction.commit()
             }
         }
