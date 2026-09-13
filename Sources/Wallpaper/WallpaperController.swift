@@ -159,8 +159,14 @@ final class WallpaperSurface {
 
     func show(paused: Bool) {
         window.orderBack(nil)
-        menuStrip?.window.orderFront(nil)
+        menuStrip?.show()
         setPaused(paused)
+        renderer.refreshSceneTime()
+    }
+
+    func refreshDesktopPresentation() {
+        menuStrip?.show()
+        renderer.refreshSceneTime()
     }
 
     private(set) var pausedState = false
@@ -1259,7 +1265,10 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         guard desktopReveal.begin() else { return }
         let started = ProcessInfo.processInfo.systemUptime
         coverageMonitor.reset()
-        for surface in surfaces { surface.setCovered(false) }
+        for surface in surfaces {
+            surface.setCovered(false)
+            surface.refreshDesktopPresentation()
+        }
         applySharedHubPause()
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["1"]
@@ -1269,6 +1278,9 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.desktopReveal.complete(at: ProcessInfo.processInfo.systemUptime, succeeded: error == nil)
+                    if error == nil {
+                        self.surfaces.forEach { $0.refreshDesktopPresentation() }
+                    }
                     let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1000
                     NSLog("Idlesse desktop reveal dispatch completed in %.1f ms", elapsed)
                     if let error { self.showError(error.localizedDescription) }
@@ -1801,7 +1813,8 @@ private final class MenuBarStrip {
     private var acquiring = false
     private var recovery = MirrorFrameRecovery()
     private func requestDrawable() {
-        guard !acquiring, readyDrawable == nil else { return }
+        guard layer.device != nil, layer.drawableSize.width > 0, layer.drawableSize.height > 0,
+              !acquiring, readyDrawable == nil else { return }
         acquiring = true
         acquisition.async { [weak self, layer] in
             let drawable = autoreleasepool { layer.nextDrawable() }
@@ -1849,6 +1862,14 @@ private final class MenuBarStrip {
         view.layer = layer
         window.contentView = view
     }
+    func show() {
+        // Show Desktop can reorder auxiliary windows on only one display.
+        // Reassert the live strip without activating the app or its library.
+        window.orderFrontRegardless()
+        recovery.missedCopy()
+        requestDrawable()
+    }
+
     func copy(command: MTLCommandBuffer, source: CAMetalDrawable) {
         guard window.isVisible else { return }
         let texture = source.texture
