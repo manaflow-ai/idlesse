@@ -173,7 +173,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebar.backgroundColor = .clear
         sidebar.selectionHighlightStyle = .regular
         sidebar.headerView = nil
-        sidebar.rowHeight = 34
+        sidebar.rowHeight = 28
+        sidebar.intercellSpacing = NSSize(width: 0, height: 0)
         sidebar.allowsEmptySelection = false
         sidebar.delegate = self
         sidebar.dataSource = self
@@ -211,7 +212,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             divider.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 12),
             divider.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -12),
             divider.bottomAnchor.constraint(equalTo: settings.topAnchor, constant: -10),
-            settings.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 16),
+            settings.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 8),
             settings.bottomAnchor.constraint(equalTo: sidebarRoot.bottomAnchor, constant: -12),
         ])
         let sidebarItem = NSSplitViewItem(viewController: sidebarController)
@@ -276,6 +277,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         return view
     }
 
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .group = rows[row] { return 44 }
+        return 28
+    }
+
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
         guard rows.indices.contains(row) else { return false }
         if case .group = rows[row] { return true }
@@ -306,8 +312,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 let row = NSStackView(views: [text, spacer, add])
                 row.alignment = .centerY
                 row.spacing = 4
-                row.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-                return row
+                let container = NSView()
+                row.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(row)
+                NSLayoutConstraint.activate([
+                    row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+                    row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+                    row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
+                    row.heightAnchor.constraint(equalToConstant: 26),
+                ])
+                return container
             }
             return text
         }
@@ -322,11 +336,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         cell.textField = text
         cell.imageView = image
         NSLayoutConstraint.activate([
-            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 16),
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
             image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             image.widthAnchor.constraint(equalToConstant: 16),
             image.heightAnchor.constraint(equalToConstant: 16),
-            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 8),
+            text.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 6),
             text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
