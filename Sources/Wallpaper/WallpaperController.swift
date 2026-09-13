@@ -55,6 +55,7 @@ final class WallpaperSurface {
     private let renderer: SceneRenderer
     private let securityScope: WallpaperScopeLease?
     private var menuStrip: MenuBarStrip?
+    private var revealBacking: MenuBarStrip?
     var diagnostics: RendererDiagnostics { renderer.diagnostics }
     var presentedFrameCount: Int? { renderer.presentedFrameCount }
     var gpuTotals: (seconds: Double, frames: Int)? { renderer.gpuTotals }
@@ -122,7 +123,13 @@ final class WallpaperSurface {
             let strip = MenuBarStrip(screen: screen)
             menuStrip = strip
             strip.onDrawableCatchUp = { [weak metal] in metal?.refreshSceneTime() }
-            metal.mirrorFrame = { [weak strip] command, drawable in strip?.copy(command: command, source: drawable) }
+            let backing = MenuBarStrip(screen: screen, desktopBacking: true)
+            revealBacking = backing
+            backing.onDrawableCatchUp = { [weak metal] in metal?.refreshSceneTime() }
+            metal.mirrorFrame = { [weak strip, weak backing] command, drawable in
+                strip?.copy(command: command, source: drawable)
+                backing?.copy(command: command, source: drawable)
+            }
         }
         updateFrameRate()
     }
@@ -160,12 +167,14 @@ final class WallpaperSurface {
     func show(paused: Bool) {
         window.orderBack(nil)
         menuStrip?.show()
+        revealBacking?.show()
         setPaused(paused)
         renderer.refreshSceneTime()
     }
 
     func refreshDesktopPresentation() {
         menuStrip?.show()
+        revealBacking?.show()
         renderer.refreshSceneTime()
     }
 
@@ -214,6 +223,8 @@ final class WallpaperSurface {
         (renderer as? MetalSceneRenderer)?.mirrorFrame = nil
         menuStrip?.window.close()
         menuStrip = nil
+        revealBacking?.window.close()
+        revealBacking = nil
         renderer.releaseResources()
         window.contentView = nil
         window.close()
@@ -1828,8 +1839,10 @@ private final class MenuBarStrip {
             }
         }
     }
-    init(screen: NSScreen) {
-        height = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top,
+    init(screen: NSScreen, desktopBacking: Bool = false) {
+        // Show Desktop exposes a larger band than the menu bar. Mirror that band
+        // below desktop content, so it never covers application windows or menus.
+        height = desktopBacking ? ceil(screen.frame.height * 0.1) : max(NSStatusBar.system.thickness, screen.safeAreaInsets.top,
             screen.frame.maxY - screen.visibleFrame.maxY)
         let frame = NSRect(x: screen.frame.minX, y: screen.frame.maxY - height,
             width: screen.frame.width, height: height)
@@ -1845,7 +1858,10 @@ private final class MenuBarStrip {
         window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
         window.setFrame(frame, display: false)
         window.isReleasedWhenClosed = false
-        window.title = "Idlesse Menu Strip Experiment"
+        if desktopBacking {
+            window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 2)
+        }
+        window.title = desktopBacking ? "Idlesse Live Desktop Backing" : "Idlesse Menu Strip Experiment"
         window.isOpaque = false
         window.backgroundColor = .clear
         layer.opacity = 0
