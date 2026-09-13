@@ -652,7 +652,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         button.setAccessibilityLabel(label)
         button.target = self
         button.action = action
-        button.toolTip = label
+        button.toolTip = nil
     }
 
     @objc private func togglePlayerSound() {
@@ -811,13 +811,14 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         playerArtwork.image = cachedThumbnail
         pauseButton.image = NSImage(systemSymbolName: wallpaper.pausedByUser ? "play.fill" : "pause.fill",
             accessibilityDescription: wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper")
-        pauseButton.toolTip = wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper"
+        pauseButton.toolTip = nil
+        pauseButton.setAccessibilityLabel(wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper")
         pauseButton.setAccessibilityLabel(pauseButton.toolTip)
         pauseButton.isEnabled = wallpaper.canPausePlayback
         previousButton.isEnabled = library.hasCycleCandidates
         nextButton.isEnabled = library.hasCycleCandidates
-        previousButton.toolTip = library.hasCycleCandidates ? "Previous wallpaper in the current Library view" : "Open a Library view with at least two wallpapers"
-        nextButton.toolTip = library.hasCycleCandidates ? "Next wallpaper in the current Library view" : "Open a Library view with at least two wallpapers"
+        previousButton.toolTip = nil
+        nextButton.toolTip = nil
         var parts: [String] = []
         if wallpaper.isLoading { parts.insert("Loading…", at: 0) }
         if let rotation = rotationSummary() { parts.append(rotation) }
