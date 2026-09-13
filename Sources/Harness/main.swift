@@ -690,6 +690,17 @@ if let index = CommandLine.arguments.firstIndex(of: "--smoke-resume"), CommandLi
     }
 }
 
+if let index = CommandLine.arguments.firstIndex(of: "--smoke-targeted-assignment"),
+   CommandLine.arguments.count > index + 1 {
+    do {
+        try WallpaperController.smokeTargetedAssignment(imageURL: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+        exit(EXIT_SUCCESS)
+    } catch {
+        fputs("Targeted assignment check failed: \(error)\n", stderr)
+        exit(EXIT_FAILURE)
+    }
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--smoke-wallpaper"),
    CommandLine.arguments.count > index + 1 {
     do {

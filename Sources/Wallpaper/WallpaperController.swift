@@ -48,6 +48,7 @@ final class WallpaperSurface {
     }
     let window: NSWindow
     let displayID: UInt32
+    let usesSharedVideoHub: Bool
     private let renderer: SceneRenderer
     private let securityScope: WallpaperScopeLease?
     private var menuStrip: MenuBarStrip?
@@ -62,6 +63,7 @@ final class WallpaperSurface {
     init(screen: NSScreen, playable: SceneDescriptor, clock: SceneClock, sharedHub: SharedVideoHub? = nil,
          securityScope: WallpaperScopeLease? = nil, onError: @escaping (String) -> Void) throws {
         displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
+        self.usesSharedVideoHub = sharedHub != nil
         self.securityScope = securityScope
         window = DesktopWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
@@ -342,6 +344,9 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 select(scopedURL, automatic: true)
                 return
             }
+            let assignmentRequest = UUID()
+            displayAssignmentRequests[displayID] = assignmentRequest
+            let assignmentGeneration = generation
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let access = scopedURL.startAccessingSecurityScopedResource()
@@ -357,6 +362,39 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                         self.select(scopedURL, automatic: true)
                         return
                     }
+                    var replacement: WallpaperSurface?
+                    var adopted = false
+                    defer { if !adopted { replacement?.close() } }
+                    if self.selectedURL != nil, self.playable?.canvas != .desktopSpan, !self.suspended,
+                       let screen = NSScreen.screens.first(where: {
+                           ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == displayID
+                       }) {
+                        var preparationError: String?
+                        let surface = try WallpaperSurface(screen: screen, playable: candidate, clock: self.clock,
+                            securityScope: WallpaperScopeLease(scopedURL)) { [weak self] message in
+                            guard let self, self.generation == assignmentGeneration,
+                                  self.displayAssignmentRequests[displayID] == assignmentRequest else { return }
+                            preparationError = message
+                            if adopted { self.showError(message) }
+                        }
+                        replacement = surface
+                        self.configureDesktopInteraction(surface)
+                        if self.presentsWindows {
+                            surface.prepareForDisplay()
+                            let deadline = ProcessInfo.processInfo.systemUptime + 10
+                            while !surface.isReadyForDisplay {
+                                guard self.generation == assignmentGeneration,
+                                      self.displayAssignmentRequests[displayID] == assignmentRequest,
+                                      !self.suspended else { throw CancellationError() }
+                                if let preparationError { throw SceneError.invalid(preparationError) }
+                                guard ProcessInfo.processInfo.systemUptime < deadline else { throw WallpaperError.preparationTimeout }
+                                try await Task.sleep(nanoseconds: 30_000_000)
+                                surface.refreshPreparation()
+                            }
+                        }
+                    }
+                    guard self.generation == assignmentGeneration,
+                          self.displayAssignmentRequests[displayID] == assignmentRequest else { throw CancellationError() }
                     // Keep every other connected screen on its visible shared wallpaper
                     // when a targeted assignment changes the mode to per-display.
                     if self.sameWallpaperOnAllDisplays, let current = self.selectedURL {
@@ -374,9 +412,30 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                     Self.appendLine("Idlesse-display target=\(Self.persistentDisplayIdentifier(displayID)) action=library-assignment")
                     if self.selectedURL == nil || self.playable?.canvas == .desktopSpan {
                         self.select(scopedURL, automatic: true)
+                    } else if let replacement {
+                        let previous = self.surfaces.filter { $0.displayID == displayID }
+                        self.surfaces.removeAll { $0.displayID == displayID }
+                        self.surfaces.append(replacement)
+                        adopted = true
+                        replacement.setMuted(!self.soundEnabled)
+                        replacement.setPaused(self.shouldPause)
+                        if self.presentsWindows { replacement.show(paused: self.shouldPause) }
+                        previous.forEach { $0.close() }
+                        if !self.surfaces.contains(where: { $0.usesSharedVideoHub }) {
+                            self.activeSharedVideoHub?.close()
+                            self.activeSharedVideoHub = nil
+                        }
+                        if let scene = self.playable, let sourceURL = self.selectedURL {
+                            self.syncSystemBackdrop(scene: scene, sourceURL: sourceURL,
+                                request: self.generation, onlyDisplayID: displayID)
+                        }
+                        self.updateMenu()
+                        NotificationCenter.default.post(name: .idlesseDisplayAssignmentsChanged, object: self)
                     } else {
                         self.refreshDisplayAssignments()
                     }
+                } catch is CancellationError {
+                    return
                 } catch {
                     self.showError("The Library wallpaper could not be assigned: " + error.localizedDescription)
                 }
@@ -643,6 +702,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     var onError: ((String) -> Void)?
     private var sessionInactive = false
     private var generation = 0
+    private var displayAssignmentRequests: [UInt32: UUID] = [:]
     private var surfaceGeneration = 0
     private(set) var isLoading = false
     private var loadTask: Task<Void, Never>?
@@ -1080,7 +1140,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
 
     /// A full-resolution SDR still gives macOS matching material for menu-bar/Show Desktop
     /// regions it composites from the system wallpaper rather than our window.
-    private func syncSystemBackdrop(scene: SceneDescriptor, sourceURL: URL, request: Int) {
+    private func syncSystemBackdrop(scene: SceneDescriptor, sourceURL: URL, request: Int, onlyDisplayID: UInt32? = nil) {
         guard persistsSelection && presentsWindows else { return }
         backdropTask?.cancel()
         backdropTask = Task { @MainActor [weak self] in
@@ -1091,7 +1151,9 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                     appropriateFor: nil, create: true).appendingPathComponent("Idlesse/Desktop Backdrops")
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-                let screens = NSScreen.screens
+                let screens = NSScreen.screens.filter { screen in
+                    onlyDisplayID == nil || (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == onlyDisplayID
+                }
                 for screen in screens {
                     try Task.checkCancellation()
                     rememberOriginalBackdrop(for: screen)
@@ -1320,6 +1382,42 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         coverageMonitor.reset()
         activeSharedVideoHub?.close()
         activeSharedVideoHub = nil
+    }
+
+    static func smokeTargetedAssignment(imageURL: URL) throws {
+        let suite = "Idlesse.TargetedAssignment." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = WallpaperController()
+        controller.resumeDefaults = defaults
+        controller.presentsWindows = false
+        controller.persistsSelection = false
+        var errors: [String] = []
+        controller.onError = { errors.append($0) }
+        let scene = try LocalSceneSource.read(imageURL)
+        controller.selectedURL = imageURL
+        controller.playable = scene
+        let initial = try controller.makeSurfaces(playable: scene, clock: controller.clock, request: controller.generation)
+        controller.surfaces = initial.surfaces
+        controller.activeSharedVideoHub = initial.hub
+        defer { controller.releaseSurfaces() }
+        guard let target = initial.surfaces.first, initial.surfaces.count > 1 else {
+            throw SceneError.invalid("Targeted assignment check needs two connected displays")
+        }
+        let untouched = initial.surfaces.filter { $0 !== target }
+        controller.assignLibraryWallpaper(imageURL, to: target.displayID)
+        let deadline = Date().addingTimeInterval(10)
+        while controller.surfaces.contains(where: { $0 === target }) && errors.isEmpty && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        precondition(errors.isEmpty, "Targeted assignment failed: \(errors)")
+        precondition(!controller.surfaces.contains(where: { $0 === target }), "Target surface must be replaced")
+        precondition(controller.surfaces.count == initial.surfaces.count)
+        for surface in untouched {
+            precondition(controller.surfaces.contains(where: { $0 === surface }), "Other displays must keep their renderer and playback state")
+        }
+        precondition(!controller.sameWallpaperOnAllDisplays)
+        print("Targeted assignment passed: one surface replaced; \(untouched.count) unchanged display renderer(s) retained")
     }
 
     static func smokeTransitions(imageURL: URL) throws {
