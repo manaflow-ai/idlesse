@@ -16,7 +16,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         var title: String {
             switch self {
             case .group(let title): return title
-            case .library: return "Library"
+            case .library: return "All Wallpapers"
             case .displays: return "Displays"
             case .favorites: return "Favorites"
             case .recent: return "Recent"
@@ -152,6 +152,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
         let sidebarScroll = NSScrollView(frame: .zero)
         sidebarScroll.hasVerticalScroller = true
+        sidebarScroll.autohidesScrollers = true
         sidebarScroll.drawsBackground = false
         sidebarScroll.documentView = sidebar
         sidebar.style = .sourceList
@@ -166,7 +167,30 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebar.setAccessibilityLabel("Idlesse destinations")
 
         let sidebarController = NSViewController()
-        sidebarController.view = sidebarScroll
+        let sidebarRoot = NSView()
+        sidebarController.view = sidebarRoot
+        let settings = NSButton(title: "Settings…", target: self, action: #selector(openPreferences))
+        settings.bezelStyle = .inline
+        settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        settings.imagePosition = .imageLeading
+        settings.contentTintColor = .secondaryLabelColor
+        let divider = NSBox()
+        divider.boxType = .separator
+        for view in [sidebarScroll, divider, settings] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            sidebarRoot.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.topAnchor),
+            sidebarScroll.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor),
+            sidebarScroll.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
+            sidebarScroll.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -8),
+            divider.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 12),
+            divider.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -12),
+            divider.bottomAnchor.constraint(equalTo: settings.topAnchor, constant: -10),
+            settings.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 16),
+            settings.bottomAnchor.constraint(equalTo: sidebarRoot.bottomAnchor, constant: -12),
+        ])
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
         sidebarItem.minimumThickness = 180
         sidebarItem.maximumThickness = 260
@@ -197,14 +221,17 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         ])
     }
 
+    @objc private func newCollection() { library.createCollection() }
+
     private func refreshSidebar() {
         var next: [SidebarRow] = [
-            .group("Idlesse"), .library, .displays,
-            .group("Library"), .favorites, .recent,
+            .group("Wallpapers"), .library, .favorites, .recent,
+            .group("Collections"),
         ]
         if let store = try? SceneLibraryStore(file: indexURL) {
             next.append(contentsOf: store.catalog.collections.map { .collection(id: $0.id, name: $0.name) })
         }
+        next.append(contentsOf: [.group("Workspace"), .displays])
         rows = next
         sidebar.reloadData()
         if let index = rows.firstIndex(of: currentRow), rows[index].selectable {
@@ -235,6 +262,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if case .group = entry {
             text.font = .systemFont(ofSize: 11, weight: .semibold)
             text.textColor = .secondaryLabelColor
+            if entry == .group("Collections") {
+                let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Collection")!, target: self, action: #selector(newCollection))
+                add.bezelStyle = .inline
+                add.toolTip = "New Collection"
+                let spacer = NSView()
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                let row = NSStackView(views: [text, spacer, add])
+                row.spacing = 4
+                return row
+            }
             return text
         }
         let cell = NSTableCellView(frame: .zero)

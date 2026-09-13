@@ -306,7 +306,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         sourceActions.action = #selector(sourceAction)
         viewModeControl.target = self
         viewModeControl.action = #selector(viewModeChanged)
-        viewModeControl.selectedSegment = UserDefaults.standard.integer(forKey: "Idlesse.library.viewMode")
+        viewModeControl.selectedSegment = (UserDefaults.standard.object(forKey: "Idlesse.library.viewMode") as? Int) ?? 1
         mediaFilter.addItems(withTitles: ["All Media", "Videos", "Scenes", "Images"])
         mediaFilter.isHidden = true
         mediaFilter.target = self
@@ -1411,6 +1411,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         preview()
         act(editing: false)
     }
+    func createCollection() {
+        collectionActions.selectItem(withTitle: "New Collection…")
+        collectionAction()
+    }
+
     @objc private func collectionAction() {
         guard let item = collectionActions.selectedItem else { return }
         if ["Move Collection Up", "Move Collection Down"].contains(item.title), let id = filter.selectedItem?.representedObject as? String {
