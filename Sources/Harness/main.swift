@@ -17,7 +17,7 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     private var library: SceneLibraryController?
     private func prepareLibrary() throws {
         if library == nil {
-        library = try SceneLibraryController(onUse: { [weak self] url in self?.wallpaper.select(url, automatic: true) },
+        library = try SceneLibraryController(onUse: { [weak self] url in self?.wallpaper.assignLibraryWallpaper(url, to: nil) },
             onEdit: { [weak self] url, asCopy in
                 guard let self else { return }
                 self.scenePreview.onClose = { [weak self] in

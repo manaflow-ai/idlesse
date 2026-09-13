@@ -344,6 +344,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         root.layer?.backgroundColor = LibrarySurfaceColors.content.cgColor
         // Keep a typical personal library resident while retaining a byte ceiling.
         // 130 decoded 320×180 posters occupy about 29 MiB.
+        readyThumbnails.totalCostLimit = 96 * 1024 * 1024
         thumbnails.countLimit = 256
         thumbnails.totalCostLimit = 96 * 1024 * 1024
         search.placeholderString = ""
@@ -970,10 +971,15 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         requestThumbnail(for: item, completion: completion)
     }
 
+    private let readyThumbnails = NSCache<NSString, NSImage>()
     private var thumbnailRetryCounts: [String: Int] = [:]
     func requestThumbnail(for item: Item, completion: @escaping (NSImage) -> Void) {
         let revision = thumbnailRevisions[item.id, default: 0]
         let requestID = revision == 0 ? item.id : "\(item.id)|\(revision)"
+        if let image = readyThumbnails.object(forKey: requestID as NSString) {
+            completion(image)
+            return
+        }
         if pendingThumbnails[requestID] != nil {
             pendingThumbnails[requestID]?.append(completion)
             return
@@ -987,6 +993,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 let callbacks = self.pendingThumbnails.removeValue(forKey: requestID) ?? []
                 guard self.thumbnailRevisions[item.id, default: 0] == revision else { return }
                 if let image {
+                    self.readyThumbnails.setObject(image, forKey: requestID as NSString, cost: Int(image.size.width * image.size.height * 4))
                     self.thumbnailRetryCounts.removeValue(forKey: requestID)
                     callbacks.forEach { $0(image) }
                 } else if self.thumbnailRetryCounts[requestID, default: 0] < 2 {
@@ -1224,7 +1231,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         livePreviewButton.isEnabled = selected != nil
         task?.cancel(); task = nil; generation += 1
         let token = generation
-        if posterItemID != selected?.id { poster.image = nil }
+        if posterItemID != selected?.id { poster.image = selected.flatMap { cache[$0.id]?.image } }
         posterItemID = selected?.id
         favorite.isEnabled = selected != nil
         updateApplyState()
@@ -1303,7 +1310,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 guard token == self.generation else { return }
                 guard after == revision else { throw SceneError.invalid("Scene changed while preparing its preview. Select it again to retry.") }
                 self.cacheOrder.removeAll { $0 == selected.id }
-                while self.cacheOrder.count >= 4 { self.cache.removeValue(forKey: self.cacheOrder.removeFirst()) }
+                while self.cacheOrder.count >= 24 { self.cache.removeValue(forKey: self.cacheOrder.removeFirst()) }
                 self.cacheOrder.append(selected.id)
                 self.cache[selected.id] = (image, note, revision)
                 self.poster.image = image
@@ -1372,7 +1379,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 try self.store.removeSource(id)
                 for entryID in removed { self.cache.removeValue(forKey: entryID) }
                 self.cacheOrder.removeAll { removed.contains($0) }
-                self.thumbnails.removeAllObjects()
+                self.thumbnails.removeAllObjects(); self.readyThumbnails.removeAllObjects()
                 self.reload()
                 self.reportTask("Removed \(source.name) from the Library. Source files were preserved.")
             } catch { self.reportTask(error.localizedDescription) }
@@ -1424,7 +1431,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 }
                 try Task.checkCancellation()
                 try self.store.applyReconciliation(diff, accepting: accepted)
-                self.cache.removeAll(); self.cacheOrder.removeAll(); self.thumbnails.removeAllObjects()
+                self.cache.removeAll(); self.cacheOrder.removeAll(); self.thumbnails.removeAllObjects(); self.readyThumbnails.removeAllObjects()
                 self.reload()
                 let present = self.store.catalog.entries.filter { $0.sourceID == id && $0.availability == .present }.count
                 let missing = self.store.catalog.entries.filter { $0.sourceID == id && $0.availability == .missing }.count
@@ -1452,7 +1459,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             if let id {
                 do {
                     try self.store.relinkSource(id, to: root)
-                    self.cache.removeAll(); self.cacheOrder.removeAll(); self.thumbnails.removeAllObjects()
+                    self.cache.removeAll(); self.cacheOrder.removeAll(); self.thumbnails.removeAllObjects(); self.readyThumbnails.removeAllObjects()
                     self.reload()
                     self.reportTask("Source relinked. Run Rescan to reconcile changed descendants.")
                 } catch { self.reportTask(error.localizedDescription) }
@@ -2047,6 +2054,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         while thumbnailCompletions < 2 && Date() < thumbDeadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
         precondition(thumbnailCompletions == 2 && controller.pendingThumbnails[duplicateRequest.id] == nil)
         print("Shared thumbnail: 2 consumers, 1 job, \(Int((ProcessInfo.processInfo.systemUptime - thumbnailStart) * 1000)) ms")
+
+        var cachedThumbnailDelivered = false
+        controller.requestThumbnail(for: duplicateRequest) { _ in cachedThumbnailDelivered = true }
+        precondition(cachedThumbnailDelivered && controller.thumbnailJobsStarted == jobsBefore + 1,
+                     "Revisited thumbnails must be delivered synchronously without another job")
 
         let beforeSaveRevision = controller.thumbnailRevisions[duplicateRequest.id, default: 0]
         let selectedBeforeSave = controller.selected?.id

@@ -883,7 +883,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     private func refreshState() {
         let url = wallpaper.selectedURL
-        library.updatePlayingURL(url)
+        let displayURLs = NSScreen.screens.map { screen in
+            wallpaper.displayURL(for: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0)?.standardizedFileURL
+        }
+        let commonURL = displayURLs.first ?? nil
+        library.updatePlayingURL(displayURLs.allSatisfy { $0 == commonURL } ? commonURL : nil)
         let title = wallpaper.currentSceneTitle ?? url.map { SceneLibraryController.displayTitle($0.deletingPathExtension().lastPathComponent) } ?? "No Wallpaper"
         let screens = NSScreen.screens.sorted { $0.frame.minX < $1.frame.minX }
         let assignments = screens.map { screen -> String in

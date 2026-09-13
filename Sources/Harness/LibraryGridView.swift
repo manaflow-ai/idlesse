@@ -499,8 +499,8 @@ final class LibraryCardView: NSView, NSDraggingSource {
         badgeLabel.stringValue = ""
     }
 
-    /// A short delay makes scroll churn cancellable before it reaches disk/cloud.
-    /// Once a legacy thumbnail decode has begun it may finish, but generation
+    /// Cached thumbnails are applied immediately when a card reappears.
+    /// A background decode may finish after reuse, but generation
     /// checks keep reused cards from receiving stale images.
     func requestThumbnail(using request: @escaping (LibraryItem, @escaping (NSImage) -> Void) -> Void) {
         cancelThumbnailRequest()
@@ -525,7 +525,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
             }
         }
         thumbnailWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+        work.perform()
     }
 
     private func cancelThumbnailRequest() {
