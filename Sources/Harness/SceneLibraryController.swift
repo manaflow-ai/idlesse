@@ -65,6 +65,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         return item
     }
 
+    func importWallpapers() { addScenes() }
+
     func setSearchEnabled(_ enabled: Bool) { search.isEnabled = enabled }
 
     private func revealImportedScope() {
@@ -138,7 +140,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let right = NSStackView()
     private let gridScroll = NSScrollView()
     private let gridView = LibraryGridView()
-    private let poster = NSImageView()
+    private let poster = LibraryDraggablePreview()
     private let previewStage = NSView()
     private var displayCanvas: DisplayAssignmentViewController?
     private var dragAccess: OpenedItem?
@@ -479,6 +481,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             return opened.url
         }
         gridView.onDragEnd = { [weak self] in self?.dragAccess = nil }
+        poster.onDragURL = { [weak self] in
+            guard let self, let selected = self.selected, let opened = try? self.open(selected) else { return nil }
+            self.dragAccess = opened
+            return opened.url
+        }
+        poster.onDragEnd = { [weak self] in self?.dragAccess = nil }
         gridView.onRequestThumbnail = { [weak self] item, callback in
             self?.requestThumbnail(for: item, completion: callback)
         }
@@ -815,7 +823,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
     func controlTextDidChange(_ obj: Notification) {
         pendingSearch?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.reload() }
+        let work = DispatchWorkItem { [weak self] in self?.pendingSearch = nil; self?.reload() }
         pendingSearch = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
@@ -2166,7 +2174,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         controller.search.stringValue = "Undertow"
         controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         precondition(controller.items.map(\.id) == beforeTyping, "Typing should not rebuild synchronously")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let searchDeadline = Date().addingTimeInterval(2)
+        while controller.pendingSearch != nil && Date() < searchDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
         precondition(controller.items.count == 1 && controller.items.first?.title == "Undertow")
         controller.search.stringValue = "Aurora"
         controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
@@ -2266,4 +2277,24 @@ private final class CenteredLibrarySearchCell: NSSearchFieldCell {
         button.origin.y = rect.midY - button.height / 2
         return button
     }
+}
+
+/// The inspector artwork is a drag source, just like a gallery card.
+private final class LibraryDraggablePreview: NSImageView, NSDraggingSource {
+    var onDragURL: (() -> URL?)?
+    var onDragEnd: (() -> Void)?
+    private var origin: NSPoint?
+    override func mouseDown(with event: NSEvent) { origin = convert(event.locationInWindow, from: nil) }
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin, let image else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - origin.x, point.y - origin.y) > 5, let url = onDragURL?() else { return }
+        self.origin = nil
+        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        item.setDraggingFrame(bounds, contents: image)
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+    override func mouseUp(with event: NSEvent) { origin = nil }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragEnd?() }
 }

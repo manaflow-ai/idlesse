@@ -341,6 +341,12 @@ final class LibraryCardView: NSView, NSDraggingSource {
         onClick?(item)
         menu.popUp(positioning: nil, at: NSPoint(x: quickMenu.frame.minX, y: quickMenu.frame.maxY), in: self)
     }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit === quickMenu || hit.isDescendant(of: quickMenu) { return hit }
+        return self
+    }
+
     override func mouseDragged(with event: NSEvent) {
         guard let origin = mouseOrigin, let item else { return }
         let point = convert(event.locationInWindow, from: nil)

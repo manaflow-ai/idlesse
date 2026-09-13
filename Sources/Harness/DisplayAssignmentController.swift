@@ -133,6 +133,15 @@ private final class DisplayMapView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) { dropTarget = nil; dropURL = nil; needsDisplay = true }
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        dropTarget = nil; dropURL = nil; needsDisplay = true
+    }
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        destination(for: sender) != nil && onDrop != nil
+    }
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        dropTarget = nil; dropURL = nil; needsDisplay = true
+    }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let (displayID, url) = destination(for: sender) else { return false }
         dropTarget = nil; dropURL = nil; needsDisplay = true

@@ -211,12 +211,23 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         about.imagePosition = .imageOnly
         about.imageScaling = .scaleProportionallyDown
         about.setAccessibilityLabel("About Idlesse")
-        for view in [sidebarScroll, footerLine, about, settings] {
+        let addWallpaper = LibraryHoverButton(title: "Add wallpapers", target: self, action: #selector(addWallpaperFromSidebar))
+        addWallpaper.isBordered = false
+        addWallpaper.bezelStyle = .regularSquare
+        addWallpaper.font = .systemFont(ofSize: 13)
+        addWallpaper.alignment = .left
+        addWallpaper.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil)
+        addWallpaper.imagePosition = .imageLeading
+        for view in [sidebarScroll, footerLine, about, settings, addWallpaper] {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebarRoot.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            sidebarScroll.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 2),
+            addWallpaper.topAnchor.constraint(equalTo: sidebarRoot.safeAreaLayoutGuide.topAnchor, constant: 12),
+            addWallpaper.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 14),
+            addWallpaper.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -8),
+            addWallpaper.heightAnchor.constraint(equalToConstant: 30),
+            sidebarScroll.topAnchor.constraint(equalTo: addWallpaper.bottomAnchor, constant: 10),
             sidebarScroll.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
             sidebarScroll.bottomAnchor.constraint(equalTo: footerLine.topAnchor),
@@ -762,6 +773,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         aboutPopover?.close()
         NSWorkspace.shared.open(URL(string: "https://github.com/teamleaderleo/idlesse")!)
     }
+
+    @objc private func addWallpaperFromSidebar() { library.importWallpapers() }
 
     @objc private func openPreferences() { wallpaper.onShowSettings?() }
 
