@@ -148,6 +148,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         canvas.activate()
     }
     private var posterItemID: String?
+    private var knownDetails: [String: String] = [:]
+    private func setDetail(_ value: String) {
+        if detail.stringValue != value { detail.stringValue = value }
+    }
     private let livePreviewButton = LibraryHoverButton(title: "Play Preview", target: nil, action: nil)
     private let previewHost = ScenePreviewHost()
     private var liveTask: Task<Void, Never>?
@@ -1048,6 +1052,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         return OpenedItem(url: access.url, access: access)
     }
     private func invalidatePreview(id: String) {
+        knownDetails.removeValue(forKey: id)
         cache.removeValue(forKey: id)
         cacheOrder.removeAll { $0 == id }
         thumbnailRevisions[id, default: 0] &+= 1
@@ -1167,9 +1172,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             updateEmptyState(activeCollection: activeCollection)
             return
         }
-        titleLabel.stringValue = selected.title
+        if titleLabel.stringValue != selected.title { titleLabel.stringValue = selected.title }
         favorite.title = store.catalog.favorites.contains(selected.id) ? "★" : "☆"
-        detail.stringValue = "Preparing still preview…"
+        setDetail(knownDetails[selected.id] ?? "")
         task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { if token == self.generation { self.task = nil } }
@@ -1182,7 +1187,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 guard token == self.generation else { return }
                 if let cached = self.cache[selected.id], cached.revision == revision {
                     self.poster.image = cached.image
-                    self.detail.stringValue = cached.note
+                    self.knownDetails[selected.id] = cached.note
+                    self.setDetail(cached.note)
                     return
                 }
                 self.cache.removeValue(forKey: selected.id)
@@ -1220,7 +1226,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 self.cacheOrder.append(selected.id)
                 self.cache[selected.id] = (image, note, revision)
                 self.poster.image = image
-                self.detail.stringValue = note
+                self.knownDetails[selected.id] = note
+                self.setDetail(note)
             } catch {
                 guard token == self.generation, !Task.isCancelled else { return }
                 self.detail.stringValue = "Preview unavailable: \(error.localizedDescription). Use Relink Source… for a moved Source root, Rescan Source… for changed descendants, or re-add a moved individual file."

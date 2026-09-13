@@ -105,11 +105,14 @@ final class LibraryGridView: NSView {
         super.draw(dirtyRect)
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
         for card in activeCards.values {
-            guard let tint = card.artworkTint else { continue }
-            let center = NSPoint(x: card.frame.midX, y: card.frame.minY + card.frame.width * 0.28)
-            let radius = card.frame.width * 0.82
-            NSGradient(starting: tint.withAlphaComponent(0.22), ending: tint.withAlphaComponent(0))?.draw(
-                fromCenter: center, radius: 0, toCenter: center, radius: radius, options: [])
+            for (index, tint) in card.artworkLights.enumerated() {
+                let center = NSPoint(x: card.frame.minX + card.frame.width * (CGFloat(index) + 0.5) / 3,
+                                     y: card.frame.minY + card.frame.width * 0.30)
+                let radius = card.frame.width * 0.72
+                NSGradient(colorsAndLocations: (tint.withAlphaComponent(0.25), 0),
+                    (tint.withAlphaComponent(0.12), 0.42), (tint.withAlphaComponent(0), 1))?.draw(
+                    fromCenter: center, radius: 0, toCenter: center, radius: radius, options: [])
+            }
         }
     }
 
@@ -355,17 +358,33 @@ final class LibraryCardView: NSView, NSDraggingSource {
 
     private let selectionEdge = LibrarySelectionEdge()
     private(set) var artworkTint: NSColor?
+    private(set) var artworkLights: [NSColor] = []
     let thumbnailView = NSImageView()
     private func updateArtworkTint(_ image: NSImage) {
-        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 12, pixelsHigh: 6,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32),
+            colorSpaceName: .deviceRGB, bytesPerRow: 48, bitsPerPixel: 32),
             let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        image.draw(in: NSRect(x: 0, y: 0, width: 1, height: 1))
+        image.draw(in: NSRect(x: 0, y: 0, width: 12, height: 6))
         NSGraphicsContext.restoreGraphicsState()
-        artworkTint = bitmap.colorAt(x: 0, y: 0)
+        artworkLights = (0..<3).compactMap { region in
+            var best: NSColor?
+            var score: CGFloat = -1
+            for x in (region * 4)..<(region * 4 + 4) {
+                for y in 0..<6 {
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                    let candidate = color.saturationComponent * color.brightnessComponent
+                    if candidate > score { score = candidate; best = color }
+                }
+            }
+            guard let best else { return nil }
+            return NSColor(calibratedHue: best.hueComponent,
+                           saturation: min(1, best.saturationComponent * 1.12),
+                           brightness: min(0.9, max(0.4, best.brightnessComponent)), alpha: 1)
+        }
+        artworkTint = artworkLights.first
         selectionEdge.tint = artworkTint
         superview?.needsDisplay = true
     }
@@ -432,6 +451,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
             cancelThumbnailRequest()
             self.item = item
             artworkTint = nil
+            artworkLights = []
             superview?.needsDisplay = true
             thumbnailView.image = Self.placeholderImage
         } else {
