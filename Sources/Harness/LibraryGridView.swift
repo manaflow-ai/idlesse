@@ -107,12 +107,14 @@ final class LibraryGridView: NSView {
         for card in activeCards.values {
             guard !card.artworkLights.isEmpty else { continue }
             let artwork = convert(card.thumbnailView.bounds, from: card.thumbnailView)
-            let spread: CGFloat = 24
-            // Feather outward from the artwork silhouette, rather than drawing
-            // separate radial lights that remain visible as overlapping circles.
-            for step in 0..<24 {
+            let spread = min(72, max(48, artwork.width * 0.22))
+            let gradient = NSGradient(colors: card.artworkLights.map { $0.withAlphaComponent(0.12) })
+            // A broad, smooth falloff lets adjacent colors blend into the surface
+            // without a bright fringe hugging the thumbnail edge.
+            for step in 0..<Int(ceil(spread)) {
                 let distance = CGFloat(step)
-                let falloff = pow(1 - distance / spread, 2)
+                let t = min(1, distance / spread)
+                let falloff = 1 - t * t * (3 - 2 * t)
                 let outer = artwork.insetBy(dx: -distance - 1, dy: -distance - 1)
                 let inner = artwork.insetBy(dx: -distance, dy: -distance)
                 let ring = NSBezierPath(roundedRect: outer, xRadius: 8 + distance + 1, yRadius: 8 + distance + 1)
@@ -120,8 +122,8 @@ final class LibraryGridView: NSView {
                 ring.windingRule = .evenOdd
                 NSGraphicsContext.saveGraphicsState()
                 ring.addClip()
-                NSGradient(colors: card.artworkLights.map { $0.withAlphaComponent(0.22 * falloff) })?
-                    .draw(in: outer, angle: 0)
+                NSGraphicsContext.current?.cgContext.setAlpha(falloff)
+                gradient?.draw(in: outer, angle: 0)
                 NSGraphicsContext.restoreGraphicsState()
             }
         }
