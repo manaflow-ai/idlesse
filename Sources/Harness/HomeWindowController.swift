@@ -205,9 +205,18 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let about = LibraryHoverButton(title: "", target: self, action: #selector(openAbout(_:)))
         about.isBordered = false
         about.bezelStyle = .regularSquare
-        let appIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath).copy() as! NSImage
-        appIcon.size = NSSize(width: 22, height: 22)
-        about.image = appIcon
+        // A dedicated small-size mark keeps the cat legible in the footer.
+        let footerIcon = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { rect in
+            NSColor(white: 0.055, alpha: 1).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            if let cat = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 17, weight: .regular))?
+                .withSymbolConfiguration(.init(paletteColors: [.white])) {
+                cat.draw(in: NSRect(x: 3, y: 3, width: 18, height: 18))
+            }
+            return true
+        }
+        about.image = footerIcon
         about.imagePosition = .imageOnly
         about.imageScaling = .scaleProportionallyDown
         about.setAccessibilityLabel("About Idlesse")
