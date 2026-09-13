@@ -115,6 +115,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var pendingSearch: DispatchWorkItem?
     private let filter = NSPopUpButton()
     private let sort = LibraryFilterButton()
+    private let refinementButton = LibraryHoverButton(title: "Filters", target: nil, action: nil)
+    private var favoriteOnly = false
+    private var unopenedOnly = false
+    private var sourceFilterID: String?
     private let viewModeControl = NSSegmentedControl(labels: ["List", "Grid"], trackingMode: .selectOne, target: nil, action: nil)
     private let collectionActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let sourceActions = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -348,7 +352,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         search.sendsWholeSearchString = true
         filter.addItems(withTitles: ["All Wallpapers", "Included", "Imported", "Favorites", "Videos", "Interactive Scenes", "Static Images"])
         filter.target = self; filter.action = #selector(filterChanged)
-        sort.addItems(withTitles: ["Name", "Recently Opened"])
+        sort.addItems(withTitles: ["Name A–Z", "Recently Opened", "Name Z–A", "Oldest Opened"])
         sort.target = self; sort.action = #selector(filterChanged)
         sort.selectItem(at: min(max(0, UserDefaults.standard.integer(forKey: "Idlesse.library.sortMode")), sort.numberOfItems - 1))
         pendingFilterTitle = UserDefaults.standard.string(forKey: "Idlesse.library.filterTitle")
@@ -407,7 +411,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         importButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         let searchRow = NSStackView(views: [search])
         searchRow.spacing = 12
-        let browsingRow = NSStackView(views: [filter, mediaFilter, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
+        refinementButton.isBordered = false
+        refinementButton.font = .systemFont(ofSize: 13)
+        refinementButton.target = self
+        refinementButton.action = #selector(showRefinements)
+        let browsingRow = NSStackView(views: [filter, mediaFilter, refinementButton, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
         browsingRow.spacing = 10
         let toolbar = NSStackView(views: homeNavigation ? [browsingRow] : [searchRow, browsingRow])
         toolbar.orientation = .vertical
@@ -696,6 +704,42 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         UserDefaults.standard.set(filter.selectedItem?.title ?? "All Wallpapers", forKey: "Idlesse.library.filterTitle")
         reload()
     }
+    @objc private func showRefinements() {
+        let menu = NSMenu()
+        func option(_ title: String, _ tag: Int, _ checked: Bool, _ source: String? = nil) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: #selector(refineLibrary(_:)), keyEquivalent: "")
+            item.target = self; item.tag = tag; item.state = checked ? .on : .off
+            item.representedObject = source
+            return item
+        }
+        menu.addItem(option("Favorites only", 1, favoriteOnly))
+        menu.addItem(option("Never opened", 2, unopenedOnly))
+        menu.addItem(.separator())
+        let sources = NSMenu()
+        sources.addItem(option("All sources", 3, sourceFilterID == nil))
+        sources.addItem(option("Imported wallpapers", 3, sourceFilterID == "imported", "imported"))
+        sources.addItem(option("Included wallpapers", 3, sourceFilterID == "included", "included"))
+        for source in store.catalog.sources {
+            sources.addItem(option(source.name, 3, sourceFilterID == source.id, source.id))
+        }
+        let sourceItem = NSMenuItem(title: "Source", action: nil, keyEquivalent: "")
+        sourceItem.submenu = sources; menu.addItem(sourceItem)
+        menu.addItem(.separator())
+        menu.addItem(option("Reset filters", 4, false))
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: refinementButton.bounds.minY), in: refinementButton)
+    }
+    @objc private func refineLibrary(_ sender: NSMenuItem) {
+        switch sender.tag {
+        case 1: favoriteOnly.toggle()
+        case 2: unopenedOnly.toggle()
+        case 3: sourceFilterID = sender.representedObject as? String
+        default:
+            favoriteOnly = false; unopenedOnly = false; sourceFilterID = nil
+            mediaFilter.selectItem(at: 0)
+        }
+        reload()
+    }
+
     static func fuzzyScore(query: String, in title: String) -> Double? {
         let q = Array(query.lowercased())
         guard !q.isEmpty else { return 0 }
@@ -743,6 +787,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             titleLabel.stringValue = "No matches"
             detail.stringValue = "Nothing matches “\(search.stringValue)”. Clear the search to browse everything, or Import… to add more."
             clearSearchButton.isHidden = false
+        } else if favoriteOnly || unopenedOnly || sourceFilterID != nil {
+            titleLabel.stringValue = "No matching wallpapers"
+            detail.stringValue = "Try another combination, or choose Filters → Reset filters."
+            clearSearchButton.isHidden = true
         } else if homeNavigation && scope == .favorites && mediaFilter.indexOfSelectedItem == 0 {
             titleLabel.stringValue = "No favorites yet"
             detail.stringValue = "Star a wallpaper to find it here."
@@ -806,10 +854,21 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let collectionPositions: [String: Int] = (activeCollection?.sceneIDs ?? []).enumerated().reduce(into: [:]) { positions, entry in
             if positions[entry.element] == nil { positions[entry.element] = entry.offset }
         }
+        let refinementCount = (favoriteOnly ? 1 : 0) + (unopenedOnly ? 1 : 0) + (sourceFilterID == nil ? 0 : 1)
+        refinementButton.title = refinementCount == 0 ? "Filters" : "Filters · \(refinementCount)"
         let needsMediaType = homeNavigation ? mediaFilter.indexOfSelectedItem > 0 : (4...6).contains(filter.indexOfSelectedItem)
         items = catalog.filter { item in
             let matches = query.isEmpty || scores[item.id] != nil
             guard matches else { return false }
+            if favoriteOnly && !store.catalog.favorites.contains(item.id) { return false }
+            if unopenedOnly && store.catalog.recent[item.id] != nil { return false }
+            if let sourceFilterID {
+                if sourceFilterID == "included" {
+                    if item.builtin == nil { return false }
+                } else if sourceFilterID == "imported" {
+                    if item.entry == nil { return false }
+                } else if item.entry?.sourceID != sourceFilterID { return false }
+            }
             let mediaType = needsMediaType ? (item.builtin != nil ? "scene" : item.entry?.inferredMediaType) : nil
             if homeNavigation {
                 if mediaFilter.indexOfSelectedItem == 1 && mediaType != "video" { return false }
@@ -840,12 +899,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 let b = scores[$1.id] ?? .infinity
                 if a != b { return a < b }
             }
-            if (homeNavigation && scope == .recent) || sort.indexOfSelectedItem == 1 {
+            if (homeNavigation && scope == .recent) || sort.indexOfSelectedItem == 1 || sort.indexOfSelectedItem == 3 {
                 let a = store.catalog.recent[$0.id] ?? .distantPast, b = store.catalog.recent[$1.id] ?? .distantPast
-                if a != b { return a > b }
+                if a != b { return sort.indexOfSelectedItem == 3 && scope != .recent ? a < b : a > b }
             }
             let order = $0.title.localizedStandardCompare($1.title)
-            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+            return order == .orderedSame ? $0.id < $1.id : order == (sort.indexOfSelectedItem == 2 ? .orderedDescending : .orderedAscending)
         }
         table.reloadData()
         gridView.update(items: items, selectedID: selected?.id)
@@ -2021,6 +2080,20 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         controller.reload()
         precondition(controller.items.count == 1 && controller.items[0].title == "Undertow")
         precondition(controller.selected?.id == controller.items[0].id)
+        controller.filter.selectItem(at: 0)
+        controller.favoriteOnly = true
+        controller.reload()
+        precondition(controller.items.count == 1 && controller.items[0].title == "Undertow", "Favorites refinement must work independently of scope")
+        controller.unopenedOnly = true
+        controller.reload()
+        precondition(controller.items.allSatisfy { controller.store.catalog.recent[$0.id] == nil }, "Unopened and favorites filters must intersect")
+        controller.favoriteOnly = false; controller.unopenedOnly = false
+        controller.sort.selectItem(at: 0); controller.reload()
+        let ascendingIDs = controller.items.map(\.id)
+        controller.sort.selectItem(at: 2); controller.reload()
+        precondition(controller.items.map(\.id) == Array(ascendingIDs.reversed()), "Reverse name sort must reverse the library")
+        controller.sort.selectItem(at: originalSort)
+        controller.filter.selectItem(at: 3); controller.reload()
         let collection = try controller.store.createCollection(name: "Psychedelic")
         try controller.store.toggleMembership(sceneID: controller.selected!.id, collectionID: collection.id)
         controller.reload()

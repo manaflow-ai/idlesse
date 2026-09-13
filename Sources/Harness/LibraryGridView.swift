@@ -107,10 +107,10 @@ final class LibraryGridView: NSView {
         for card in activeCards.values {
             for (index, tint) in card.artworkLights.enumerated() {
                 let center = NSPoint(x: card.frame.minX + card.frame.width * (CGFloat(index) + 0.5) / 3,
-                                     y: card.frame.minY + card.frame.width * 0.30)
-                let radius = card.frame.width * 0.72
-                NSGradient(colorsAndLocations: (tint.withAlphaComponent(0.25), 0),
-                    (tint.withAlphaComponent(0.12), 0.42), (tint.withAlphaComponent(0), 1))?.draw(
+                                     y: card.frame.minY + card.frame.width * 0.48)
+                let radius = card.frame.width * 0.38
+                NSGradient(colorsAndLocations: (tint.withAlphaComponent(0.64), 0),
+                    (tint.withAlphaComponent(0.34), 0.48), (tint.withAlphaComponent(0), 1))?.draw(
                     fromCenter: center, radius: 0, toCenter: center, radius: radius, options: [])
             }
         }
