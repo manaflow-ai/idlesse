@@ -101,6 +101,17 @@ final class LibraryGridView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
+        for card in activeCards.values {
+            guard let tint = card.artworkTint else { continue }
+            let center = NSPoint(x: card.frame.midX, y: card.frame.minY + card.frame.width * 0.28)
+            let radius = card.frame.width * 0.82
+            NSGradient(starting: tint.withAlphaComponent(0.22), ending: tint.withAlphaComponent(0))?.draw(
+                fromCenter: center, radius: 0, toCenter: center, radius: radius, options: [])
+        }
+    }
 
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
@@ -308,7 +319,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
         quickMenu.isHidden = !hovered
         layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(hovered ? 0.07 : 0).cgColor
         thumbnailView.layer?.borderColor = NSColor.white.withAlphaComponent(0.30).cgColor
-        thumbnailView.layer?.borderWidth = hovered ? 1 : 0
+        thumbnailView.layer?.borderWidth = 0
         needsLayout = true
     }
     @objc private func showQuickMenu() {
@@ -342,7 +353,23 @@ final class LibraryCardView: NSView, NSDraggingSource {
     var onClick: ((LibraryItem) -> Void)?
     var onDoubleClick: ((LibraryItem) -> Void)?
 
+    private let selectionEdge = LibrarySelectionEdge()
+    private(set) var artworkTint: NSColor?
     let thumbnailView = NSImageView()
+    private func updateArtworkTint(_ image: NSImage) {
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32),
+            let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: 1, height: 1))
+        NSGraphicsContext.restoreGraphicsState()
+        artworkTint = bitmap.colorAt(x: 0, y: 0)
+        selectionEdge.tint = artworkTint
+        superview?.needsDisplay = true
+    }
+
     private let titleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
     private var thumbnailWork: DispatchWorkItem?
@@ -376,6 +403,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
         quickMenu.toolTip = "Wallpaper actions"
         quickMenu.isHidden = true
         addSubview(quickMenu)
+        addSubview(selectionEdge)
 
         badgeLabel.font = .systemFont(ofSize: 10, weight: .regular)
         badgeLabel.textColor = .secondaryLabelColor
@@ -387,11 +415,9 @@ final class LibraryCardView: NSView, NSDraggingSource {
 
     override func layout() {
         super.layout()
+        selectionEdge.frame = bounds
         let thumbHeight = bounds.width * 9.0 / 16.0
         thumbnailView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: thumbHeight)
-        if hovered && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            thumbnailView.frame = thumbnailView.frame.insetBy(dx: -2, dy: -2)
-        }
         quickMenu.frame = NSRect(x: bounds.width - 36, y: 6, width: 28, height: 26)
         let labelY = thumbHeight + 5
         titleLabel.frame = NSRect(x: 8, y: labelY, width: max(0, bounds.width - 16), height: 18)
@@ -405,6 +431,8 @@ final class LibraryCardView: NSView, NSDraggingSource {
         if changed {
             cancelThumbnailRequest()
             self.item = item
+            artworkTint = nil
+            superview?.needsDisplay = true
             thumbnailView.image = Self.placeholderImage
         } else {
             self.item = item
@@ -451,6 +479,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
                           self.thumbnailGeneration == generation,
                           self.item?.id == itemID else { return }
                     self.thumbnailView.image = image
+                    self.updateArtworkTint(image)
                 }
                 if Thread.isMainThread { apply() }
                 else { DispatchQueue.main.async(execute: apply) }
@@ -467,13 +496,8 @@ final class LibraryCardView: NSView, NSDraggingSource {
     }
 
     private func updateBorder() {
-        if isSelected {
-            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.65).cgColor
-            layer?.borderWidth = 2
-        } else {
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-            layer?.borderWidth = 0
-        }
+        layer?.borderWidth = 0
+        selectionEdge.isHidden = !isSelected
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -485,6 +509,21 @@ final class LibraryCardView: NSView, NSDraggingSource {
 
     private static var placeholderImage: NSImage? {
         NSImage(systemSymbolName: "photo", accessibilityDescription: "Thumbnail")
+    }
+}
+
+private final class LibrarySelectionEdge: NSView {
+    var tint: NSColor? { didSet { needsDisplay = true } }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        ring.append(NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6.5, yRadius: 6.5))
+        ring.windingRule = .evenOdd
+        ring.addClip()
+        NSGradient(colors: [.white.withAlphaComponent(0.15),
+            (tint ?? .white).withAlphaComponent(0.32), .white.withAlphaComponent(0.60)])?.draw(in: bounds, angle: 90)
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 

@@ -170,10 +170,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         if let selected, let playingURL {
             isPlaying = (try? open(selected).url.standardizedFileURL) == playingURL
         } else { isPlaying = false }
-        apply.title = isPlaying ? "On Desktop" : "Set Wallpaper"
+        apply.title = isPlaying ? "✓ On Desktop" : "Set Wallpaper"
         apply.isEnabled = selected != nil && !isPlaying
-        apply.isHidden = isPlaying
-        desktopStatus.isHidden = !isPlaying
+        apply.isHidden = false
+        desktopStatus.isHidden = true
     }
     private var previewObservers: [NSObjectProtocol] = []
     private let titleLabel = NSTextField(labelWithString: "Choose a wallpaper")
@@ -516,7 +516,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let primary = NSStackView(views: [editingActions, clearSearchButton])
         primary.spacing = 12
         apply.bezelStyle = .rounded
-        apply.bezelColor = .controlAccentColor
+        apply.isBordered = false
+        apply.wantsLayer = true
+        apply.layer?.cornerRadius = 7
+        apply.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        apply.widthAnchor.constraint(equalToConstant: 128).isActive = true
+        apply.heightAnchor.constraint(equalToConstant: 28).isActive = true
         apply.contentTintColor = .white
         detail.font = .systemFont(ofSize: 12)
         let glassControls = NSVisualEffectView()
@@ -1927,7 +1932,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         while controller.task != nil && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
         precondition(controller.poster.image != nil, controller.detail.stringValue)
         controller.updatePlayingURL(try controller.open(controller.selected!).url)
-        precondition(controller.apply.title == "On Desktop" && !controller.apply.isEnabled)
+        precondition(controller.apply.title == "✓ On Desktop" && !controller.apply.isEnabled && !controller.apply.isHidden)
         let playingMenu = controller.gridView.onMenu!(controller.selected!)
         precondition(playingMenu.item(at: 0)?.title == "On Desktop" && playingMenu.item(at: 0)?.isEnabled == false)
         precondition(!controller.adjust.isEnabled && playingMenu.item(at: 1)?.isEnabled == false,
