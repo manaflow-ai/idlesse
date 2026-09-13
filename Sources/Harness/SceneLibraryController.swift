@@ -96,7 +96,13 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let viewModeControl = NSSegmentedControl(labels: ["List", "Grid"], trackingMode: .selectOne, target: nil, action: nil)
     private let collectionActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let sourceActions = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let thumbnailQueue = DispatchQueue(label: "Idlesse.library.thumbnails", qos: .utility)
+    private let thumbnailQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "Idlesse.library.thumbnails"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 3
+        return queue
+    }()
     private let thumbnails = NSCache<NSString, NSImage>()
     private var pendingThumbnails: [String: [(NSImage) -> Void]] = [:]
     private var resolvedMediaURLs: [String: URL] = [:]
@@ -323,6 +329,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         mediaFilter.isHidden = true
         mediaFilter.target = self
         mediaFilter.action = #selector(mediaFilterChanged)
+        for popup in [mediaFilter, sort] {
+            popup.bezelStyle = .inline
+            (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+        }
+        libraryActions.bezelStyle = .inline
         viewModeControl.setLabel("", forSegment: 0)
         viewModeControl.setLabel("", forSegment: 1)
         viewModeControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List"), forSegment: 0)
@@ -334,10 +345,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         inspectorButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Inspector")
         inspectorButton.imagePosition = .imageOnly
         inspectorButton.setAccessibilityLabel("Inspector")
-        libraryActions.addItem(withTitle: "")
-        libraryActions.item(at: 0)?.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Library actions")
+        libraryActions.addItem(withTitle: "Organize")
         libraryActions.toolTip = "Collections and sources"
-        libraryActions.setAccessibilityLabel("Library actions")
+        libraryActions.setAccessibilityLabel("Organize library")
         libraryActions.menu?.delegate = self
         inspectorButton.target = self
         inspectorButton.action = #selector(toggleInspector)
@@ -832,7 +842,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             }
         }
         let posterAccess: SceneLibraryStore.Access? = item.entry.flatMap { try? store.accessPoster($0) }
-        thumbnailQueue.async { [weak self, opened, posterAccess] in
+        thumbnailQueue.addOperation { [weak self, opened, posterAccess] in
             guard let self else { return }
             let source = opened.url
             let stamp = try? source.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])

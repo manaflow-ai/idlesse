@@ -585,7 +585,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         item.isBordered = false
         let surface = NSView()
         surface.wantsLayer = true
-        surface.layer?.cornerRadius = 20
+        surface.layer?.cornerRadius = 10
         surface.layer?.masksToBounds = true
         surface.layer?.borderWidth = 0.5
         surface.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
