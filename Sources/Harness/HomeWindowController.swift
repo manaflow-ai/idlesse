@@ -480,11 +480,11 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace, Self.settingsItem]
+        [Self.sidebarToggleItem, Self.columnDividerItem, Self.searchItem, Self.importItem, .space, Self.nowPlayingItem, .flexibleSpace]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
@@ -662,8 +662,19 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if standardized != cachedThumbnailURL {
             cachedThumbnailURL = standardized
             cachedThumbnail = thumbnail(for: url)
+            if let url {
+                library.requestPlaybackArtwork(url) { [weak self] image in
+                    guard let self, self.cachedThumbnailURL == url.standardizedFileURL else { return }
+                    let artwork = NSImage(size: NSSize(width: 40, height: 24))
+                    artwork.lockFocus()
+                    image.draw(in: NSRect(x: 0, y: 0, width: 40, height: 24))
+                    artwork.unlockFocus()
+                    self.cachedThumbnail = artwork
+                    self.nowPlayingButton.image = artwork
+                }
+            }
         }
-        nowPlayingButton.image = cachedThumbnail ?? NSImage(systemSymbolName: "photo", accessibilityDescription: title)
+        nowPlayingButton.image = cachedThumbnail
         pauseButton.image = NSImage(systemSymbolName: wallpaper.pausedByUser ? "play.fill" : "pause.fill",
             accessibilityDescription: wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper")
         pauseButton.toolTip = wallpaper.pausedByUser ? "Resume wallpaper" : "Pause wallpaper"
@@ -737,7 +748,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         precondition(home.rows.contains(.library) && home.rows.contains(.displays))
         precondition(home.rows.contains(.favorites) && home.rows.contains(.recent))
         precondition(home.window.toolbar != nil)
-        precondition(home.window.toolbar!.items.map(\.itemIdentifier).contains(Self.settingsItem))
+        precondition(!home.window.toolbar!.items.map(\.itemIdentifier).contains(Self.settingsItem))
         let searchItem = home.window.toolbar!.items.first { $0.itemIdentifier == Self.searchItem }
         precondition(searchItem is NSSearchToolbarItem)
         precondition(home.window.toolbar!.items.contains { $0.itemIdentifier == Self.importItem })

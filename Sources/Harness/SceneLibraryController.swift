@@ -42,7 +42,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         importButton.removeFromSuperview()
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Import Wallpapers"
-        item.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Import Wallpapers")
+        let button = NSButton(title: "Add Wallpapers…", target: self, action: #selector(addScenes))
+        button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .texturedRounded
+        item.view = button
         item.toolTip = "Import wallpapers…"
         item.target = self
         item.action = #selector(addScenes)
@@ -772,6 +776,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         ])
         return cell
     }
+    func requestPlaybackArtwork(_ url: URL, completion: @escaping (NSImage) -> Void) {
+        let item = Item(id: "playback:" + url.standardizedFileURL.path,
+                        title: url.deletingPathExtension().lastPathComponent, builtin: url, entry: nil)
+        requestThumbnail(for: item, completion: completion)
+    }
+
     func requestThumbnail(for item: Item, completion: @escaping (NSImage) -> Void) {
         thumbnails.countLimit = 64
         let revision = thumbnailRevisions[item.id, default: 0]
