@@ -201,16 +201,16 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let footerLine = NSView()
         footerLine.wantsLayer = true
         footerLine.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.07).cgColor
-        let repository = LibraryHoverButton(title: "GitHub", target: self, action: #selector(openRepository))
-        repository.isBordered = false
-        repository.bezelStyle = .regularSquare
-        repository.font = .systemFont(ofSize: 12)
-        repository.contentTintColor = .secondaryLabelColor
-        repository.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)
-        repository.imagePosition = .imageTrailing
-        repository.toolTip = "Idlesse on GitHub"
-        repository.setAccessibilityLabel("Open Idlesse repository on GitHub")
-        for view in [sidebarScroll, footerLine, repository, settings] {
+        let about = LibraryHoverButton(title: "", target: self, action: #selector(openAbout))
+        about.isBordered = false
+        about.bezelStyle = .regularSquare
+        let appIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath).copy() as! NSImage
+        appIcon.size = NSSize(width: 22, height: 22)
+        about.image = appIcon
+        about.imagePosition = .imageOnly
+        about.imageScaling = .scaleProportionallyDown
+        about.setAccessibilityLabel("About Idlesse")
+        for view in [sidebarScroll, footerLine, about, settings] {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebarRoot.addSubview(view)
         }
@@ -223,10 +223,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
             footerLine.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor),
             footerLine.heightAnchor.constraint(equalToConstant: 0.5),
             footerLine.bottomAnchor.constraint(equalTo: settings.topAnchor, constant: -10),
-            repository.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 12),
-            repository.centerYAnchor.constraint(equalTo: settings.centerYAnchor),
-            repository.heightAnchor.constraint(equalToConstant: 28),
-            repository.widthAnchor.constraint(equalToConstant: 72),
+            about.leadingAnchor.constraint(equalTo: sidebarRoot.leadingAnchor, constant: 12),
+            about.centerYAnchor.constraint(equalTo: settings.centerYAnchor),
+            about.heightAnchor.constraint(equalToConstant: 28),
+            about.widthAnchor.constraint(equalToConstant: 28),
             settings.trailingAnchor.constraint(equalTo: sidebarRoot.trailingAnchor, constant: -8),
             settings.bottomAnchor.constraint(equalTo: sidebarRoot.bottomAnchor, constant: -12),
         ])
@@ -691,8 +691,8 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
 
     @objc private func previousWallpaper() { library.cycle(delta: -1, from: wallpaper.selectedURL); refreshState() }
     @objc private func nextWallpaper() { library.cycle(delta: 1, from: wallpaper.selectedURL); refreshState() }
-    @objc private func openRepository() {
-        NSWorkspace.shared.open(URL(string: "https://github.com/teamleaderleo/idlesse")!)
+    @objc private func openAbout() {
+        NSApp.orderFrontStandardAboutPanel(nil)
     }
 
     @objc private func openPreferences() { wallpaper.onShowSettings?() }
