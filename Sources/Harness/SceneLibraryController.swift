@@ -23,8 +23,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var selectionByScope: [Scope: String] = [:]
     private var homeNavigation = false
     var onScopeChange: ((Scope) -> Void)?
-    private let mediaFilter = NSPopUpButton()
-    private let importButton = NSButton(title: "Add Wallpapers…", target: nil, action: nil)
+    private let mediaFilter = LibraryFilterButton()
+    private let importButton = LibraryHoverButton(title: "Add Wallpapers…", target: nil, action: nil)
 
     /// Home owns the toolbar, while Library retains the search query and import actions.
     func makeSearchToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
@@ -42,7 +42,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         importButton.removeFromSuperview()
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Import Wallpapers"
-        let button = NSButton(title: "Add Wallpapers…", target: self, action: #selector(addScenes))
+        let button = LibraryHoverButton(title: "Add Wallpapers…", target: self, action: #selector(addScenes))
         button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.bezelStyle = .texturedRounded
@@ -83,7 +83,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         }
         reload(selecting: changed ? selectionByScope[scope] : nil)
     }
-    private let inspectorButton = NSButton(frame: .zero)
+    private let inspectorButton = LibraryHoverButton(frame: .zero)
     private let libraryActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let browserSplit = NSSplitViewController()
     private var inspectorItem: NSSplitViewItem?
@@ -102,7 +102,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }()
     private var pendingSearch: DispatchWorkItem?
     private let filter = NSPopUpButton()
-    private let sort = NSPopUpButton()
+    private let sort = LibraryFilterButton()
     private let viewModeControl = NSSegmentedControl(labels: ["List", "Grid"], trackingMode: .selectOne, target: nil, action: nil)
     private let collectionActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let sourceActions = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -124,13 +124,13 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let gridView = LibraryGridView()
     private let poster = NSImageView()
     private var posterItemID: String?
-    private let livePreviewButton = NSButton(title: "Play Preview", target: nil, action: nil)
+    private let livePreviewButton = LibraryHoverButton(title: "Play Preview", target: nil, action: nil)
     private let previewHost = ScenePreviewHost()
     private var liveTask: Task<Void, Never>?
     private var liveGeneration = 0
     private var liveAccess: SceneLibraryStore.Access?
     private let taskStatus = NSTextField(labelWithString: "")
-    private let dismissStatus = NSButton(title: "Dismiss", target: nil, action: nil)
+    private let dismissStatus = LibraryHoverButton(title: "Dismiss", target: nil, action: nil)
     private let taskStatusRow = NSStackView()
     private var browserBottom: NSLayoutConstraint?
     private let desktopStatus = NSTextField(labelWithString: "✓ On Desktop")
@@ -154,13 +154,13 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var previewObservers: [NSObjectProtocol] = []
     private let titleLabel = NSTextField(labelWithString: "Choose a wallpaper")
     private let detail = NSTextField(wrappingLabelWithString: "")
-    private let favorite = NSButton(title: "Favorite", target: nil, action: nil)
-    private let apply = NSButton(title: "Set Wallpaper", target: nil, action: nil)
-    private let edit = NSButton(title: "Edit in Studio", target: nil, action: nil)
-    private let adjust = NSButton(title: "Adjust…", target: nil, action: nil)
-    private let clearSearchButton = NSButton(title: "Clear search", target: nil, action: nil)
+    private let favorite = LibraryHoverButton(title: "Favorite", target: nil, action: nil)
+    private let apply = LibraryHoverButton(title: "Set Wallpaper", target: nil, action: nil)
+    private let edit = LibraryHoverButton(title: "Edit in Studio", target: nil, action: nil)
+    private let adjust = LibraryHoverButton(title: "Adjust…", target: nil, action: nil)
+    private let clearSearchButton = LibraryHoverButton(title: "Clear search", target: nil, action: nil)
     private let more = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let remove = NSButton(title: "Remove from Library", target: nil, action: nil)
+    private let remove = LibraryHoverButton(title: "Remove from Library", target: nil, action: nil)
     private enum PosterRevision: Equatable, Sendable {
         case package(ScenePackageWriter.Revision)
         case file(Date?, Int?, Data?)
@@ -344,7 +344,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             popup.bezelStyle = .rounded
             popup.isBordered = false
             popup.font = .systemFont(ofSize: 13, weight: .regular)
-            (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+            (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+            popup.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+            popup.imagePosition = .imageTrailing
         }
         libraryActions.isBordered = false
         libraryActions.font = .systemFont(ofSize: 13, weight: .regular)
@@ -382,7 +384,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let toolbar = NSStackView(views: [searchRow, browsingRow])
         toolbar.orientation = .vertical
         toolbar.alignment = .leading
-        toolbar.spacing = 10
+        toolbar.spacing = 6
         searchRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
         browsingRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
@@ -545,7 +547,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         browserBottom = browserSplit.view.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         browserBottom?.isActive = true
         NSLayoutConstraint.activate([
-            toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 12),
+            toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 2),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             search.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
@@ -1633,9 +1635,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         guard let id = filter.selectedItem?.representedObject as? String,
               let collection = store.catalog.collections.first(where: { $0.id == id }), let window = presentationWindow else { return }
         let settings = collection.playback ?? SceneLibraryStore.Playback()
-        let enabled = NSButton(checkboxWithTitle: "Play on a schedule", target: nil, action: nil)
+        let enabled = LibraryHoverButton(checkboxWithTitle: "Play on a schedule", target: nil, action: nil)
         enabled.state = settings.startMinute == nil ? .off : .on
-        let shuffle = NSButton(checkboxWithTitle: "Shuffle without repeats", target: nil, action: nil)
+        let shuffle = LibraryHoverButton(checkboxWithTitle: "Shuffle without repeats", target: nil, action: nil)
         shuffle.state = settings.shuffle ? .on : .off
         let interval = NSPopUpButton()
         interval.addItems(withTitles: ["5 minutes", "15 minutes", "30 minutes", "60 minutes"])
@@ -1650,7 +1652,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let start = picker(settings.startMinute ?? 420)
         let end = picker(settings.endMinute ?? 1320)
         let dayButtons = (1...7).map { day -> NSButton in
-            let button = NSButton(checkboxWithTitle: Calendar.current.shortWeekdaySymbols[day - 1], target: nil, action: nil)
+            let button = LibraryHoverButton(checkboxWithTitle: Calendar.current.shortWeekdaySymbols[day - 1], target: nil, action: nil)
             button.state = (settings.weekdays?.contains(day) ?? true) ? .on : .off
             return button
         }

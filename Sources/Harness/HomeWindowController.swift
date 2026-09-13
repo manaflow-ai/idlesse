@@ -53,25 +53,25 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
     private let contentHost = NSView(frame: .zero)
     private let displaysView = NSView(frame: .zero)
     private let displaySummary = NSTextField(wrappingLabelWithString: "")
-    private let filesButton = NSButton(checkboxWithTitle: "Files", target: nil, action: nil)
-    private let widgetsButton = NSButton(checkboxWithTitle: "Widgets", target: nil, action: nil)
-    private let sameDisplaysButton = NSButton(checkboxWithTitle: "Same wallpaper on all displays", target: nil, action: nil)
+    private let filesButton = LibraryHoverButton(checkboxWithTitle: "Files", target: nil, action: nil)
+    private let widgetsButton = LibraryHoverButton(checkboxWithTitle: "Widgets", target: nil, action: nil)
+    private let sameDisplaysButton = LibraryHoverButton(checkboxWithTitle: "Same wallpaper on all displays", target: nil, action: nil)
     private var rows: [SidebarRow] = []
     private var currentRow: SidebarRow = .library
     private var sidebarItem: NSSplitViewItem?
     private weak var navigationSplit: NSSplitView?
     private var refreshTimer: Timer?
 
-    private let nowPlayingButton = NSButton(title: "No Wallpaper", target: nil, action: nil)
+    private let nowPlayingButton = LibraryHoverButton(title: "No Wallpaper", target: nil, action: nil)
     private let destinationLabel = NSTextField(labelWithString: "")
-    private let previousButton = NSButton(frame: .zero)
+    private let previousButton = LibraryHoverButton(frame: .zero)
     private let playerBackdrop = WallpaperHeaderArtwork()
     private let playerHeader = NSView()
     private var audioProbe: Task<Void, Never>?
     private let playerArtwork = NSImageView()
-    private let playerSound = NSButton(frame: .zero)
-    private let pauseButton = NSButton(frame: .zero)
-    private let nextButton = NSButton(frame: .zero)
+    private let playerSound = LibraryHoverButton(frame: .zero)
+    private let pauseButton = LibraryHoverButton(frame: .zero)
+    private let nextButton = LibraryHoverButton(frame: .zero)
     private var nowPlayingPopover: NSPopover?
     private var refreshPlaybackPopover: (() -> Void)?
     private var cachedThumbnailURL: URL?
@@ -180,10 +180,15 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         sidebarController.view = sidebarRoot
         sidebarRoot.wantsLayer = true
         sidebarRoot.layer?.backgroundColor = LibrarySurfaceColors.sidebar.cgColor
-        let settings = NSButton(title: "Settings…", target: self, action: #selector(openPreferences))
+        let settings = LibraryHoverButton(title: "", target: self, action: #selector(openPreferences))
         settings.bezelStyle = .inline
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        settings.imagePosition = .imageLeading
+        settings.imagePosition = .imageOnly
+        settings.isBordered = false
+        settings.toolTip = "Settings (⌘,)"
+        settings.setAccessibilityLabel("Settings")
+        settings.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        settings.heightAnchor.constraint(equalToConstant: 28).isActive = true
         settings.contentTintColor = .secondaryLabelColor
         let divider = NSBox()
         divider.boxType = .separator
@@ -281,10 +286,10 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         text.font = .systemFont(ofSize: 13)
         text.lineBreakMode = .byTruncatingTail
         if case .group = entry {
-            text.font = .systemFont(ofSize: 11, weight: .semibold)
+            text.font = .systemFont(ofSize: 13, weight: .regular)
             text.textColor = .secondaryLabelColor
             if entry == .group("Collections") {
-                let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Collection")!, target: self, action: #selector(newCollection))
+                let add = LibraryHoverButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Collection")!, target: self, action: #selector(newCollection))
                 add.isBordered = false
                 add.widthAnchor.constraint(equalToConstant: 24).isActive = true
                 add.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -292,6 +297,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
                 let spacer = NSView()
                 spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
                 let row = NSStackView(views: [text, spacer, add])
+                row.alignment = .centerY
                 row.spacing = 4
                 row.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
                 return row
@@ -515,7 +521,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         }
         if itemIdentifier == Self.sidebarToggleItem {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let button = NSButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!, target: self, action: #selector(toggleSidebar))
+            let button = LibraryHoverButton(image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")!, target: self, action: #selector(toggleSidebar))
             button.isBordered = false
             item.view = button
             item.label = "Sidebar"
@@ -668,20 +674,20 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         let destination = NSTextField(labelWithString: destinationLabel.stringValue)
         destination.textColor = .secondaryLabelColor
         destination.isHidden = destination.stringValue.isEmpty
-        let stop = NSButton(title: "Stop", target: self, action: #selector(stopWallpaper))
+        let stop = LibraryHoverButton(title: "Stop", target: self, action: #selector(stopWallpaper))
         stop.bezelStyle = .rounded
         stop.isEnabled = wallpaper.selectedURL != nil
-        let pause = NSButton(title: wallpaper.pausedByUser ? "Resume" : "Pause", target: self, action: #selector(togglePopoverPause))
+        let pause = LibraryHoverButton(title: wallpaper.pausedByUser ? "Resume" : "Pause", target: self, action: #selector(togglePopoverPause))
         pause.isEnabled = wallpaper.canPausePlayback
-        let sound = NSButton(checkboxWithTitle: "Wallpaper Sound", target: self, action: #selector(togglePopoverSound))
+        let sound = LibraryHoverButton(checkboxWithTitle: "Wallpaper Sound", target: self, action: #selector(togglePopoverSound))
         sound.state = wallpaper.soundEnabled ? .on : .off
         sound.isEnabled = wallpaper.hasVideoContent
-        let controls = NSButton(title: "Scene Controls…", target: self, action: #selector(openSceneControls))
+        let controls = LibraryHoverButton(title: "Scene Controls…", target: self, action: #selector(openSceneControls))
         controls.isHidden = !wallpaper.hasSceneControls
         pause.isBordered = false
         stop.isBordered = false
-        let previous = NSButton(image: NSImage(systemSymbolName: "backward.end.fill", accessibilityDescription: "Previous wallpaper")!, target: self, action: #selector(previousWallpaper))
-        let next = NSButton(image: NSImage(systemSymbolName: "forward.end.fill", accessibilityDescription: "Next wallpaper")!, target: self, action: #selector(nextWallpaper))
+        let previous = LibraryHoverButton(image: NSImage(systemSymbolName: "backward.end.fill", accessibilityDescription: "Previous wallpaper")!, target: self, action: #selector(previousWallpaper))
+        let next = LibraryHoverButton(image: NSImage(systemSymbolName: "forward.end.fill", accessibilityDescription: "Next wallpaper")!, target: self, action: #selector(nextWallpaper))
         previous.isBordered = false
         next.isBordered = false
         let playback = NSStackView(views: [previous, pause, next, NSView(), stop])
@@ -949,4 +955,74 @@ enum LibrarySurfaceColors {
 final class LibrarySplitView: NSSplitView {
     override var dividerColor: NSColor { .clear }
     override func drawDivider(in rect: NSRect) {}
+}
+
+/// A shared, quiet hover treatment for library actions.
+class LibraryHoverButton: NSButton {
+    private var hoverTracking: NSTrackingArea?
+    private var hovering = false
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let tracking = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(tracking)
+        hoverTracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering && isEnabled {
+            NSColor.labelColor.withAlphaComponent(0.10).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
+        super.draw(dirtyRect)
+    }
+}
+
+/// Selection semantics with a menu that opens below the control.
+final class LibraryFilterButton: NSPopUpButton {
+    private var hoverTracking: NSTrackingArea?
+    private var hovering = false
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        size.width += 18
+        return size
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let tracking = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(tracking)
+        hoverTracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering && isEnabled {
+            NSColor.labelColor.withAlphaComponent(0.10).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        }
+        super.draw(dirtyRect)
+        let arrow = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        arrow?.draw(in: NSRect(x: bounds.maxX - 13, y: bounds.midY - 4, width: 9, height: 8), from: .zero, operation: .sourceOver, fraction: isEnabled ? 0.8 : 0.3)
+    }
+    override func performClick(_ sender: Any?) { showChoices() }
+
+    override func mouseDown(with event: NSEvent) { showChoices() }
+    private func showChoices() {
+        guard isEnabled else { return }
+        let choices = NSMenu()
+        for (index, source) in itemArray.enumerated() {
+            let item = NSMenuItem(title: source.title, action: #selector(choose(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = index == indexOfSelectedItem ? .on : .off
+            choices.addItem(item)
+        }
+        choices.popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.maxY : bounds.minY), in: self)
+    }
+    @objc private func choose(_ sender: NSMenuItem) {
+        selectItem(at: sender.tag)
+        if let action { NSApp.sendAction(action, to: target, from: self) }
+    }
 }
