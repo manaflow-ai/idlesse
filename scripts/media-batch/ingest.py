@@ -416,6 +416,14 @@ def upscale_batch(workspace, assets, yes, json_events, log):
 
 # --- install -----------------------------------------------------------------
 
+def tidy_job(job, staged_dir, names):
+    """Drop an installed job's texture archives and staged media; its logs and reports stay.
+
+    Each job otherwise keeps the lobby's textures twice over plus its render, and
+    a batch of re-exports filled the disk with them."""
+    for path in [job / 'input.zip', job / 'restored.zip', *(Path(staged_dir) / name for name in names[:2])]:
+        path.unlink(missing_ok=True)
+
 def install(staged_dir, names, output, replace, clear_framing, log):
     """Put a staged export in place. `names` is (video, poster, receipt, sidecar)."""
     video, poster, receipt, sidecar_name = names
@@ -737,6 +745,7 @@ def main():
         staged = target.export(job, duration, modal, log, encoder='webcodecs' if a.fast_encode else 'x265', edges=edges)
         keep_camera = True
         final = install(staged, target.names, output, a.replace, clear_framing=changed, log=log)
+        tidy_job(job, staged, target.names)
         if a.trim_edges and trim:
             sidecar = output / target.names[3]
             data = json.loads(sidecar.read_text()) if sidecar.exists() else {}
