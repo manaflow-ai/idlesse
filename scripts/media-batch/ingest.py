@@ -742,6 +742,16 @@ def main():
         else:
             log('Azur Lane models render from their original textures; this export is local and free.')
 
+        if a.reframe:
+            # Background tracks can loop on longer cycles than the main animation, and
+            # the installed export already covers all of them; keep its length.
+            probed = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0',
+                                     str(media)], capture_output=True, text=True).stdout.strip()
+            installed = round(float(probed) * 60) if probed else 0
+            loop = round(duration * 60)
+            if loop and installed > loop and installed % loop == 0:
+                log(f'Keeping the installed {installed / 60:.3f}s length ({installed // loop} loops).')
+                duration = installed / 60
         staged = target.export(job, duration, modal, log, encoder='webcodecs' if a.fast_encode else 'x265', edges=edges)
         keep_camera = True
         final = install(staged, target.names, output, a.replace, clear_framing=changed, log=log)
