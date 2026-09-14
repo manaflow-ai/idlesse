@@ -1,5 +1,31 @@
 # Desktop usability qualification
 
+## September 14 Show Desktop menu motion
+
+During Show Desktop the Dock's display replaces its native `Menubar` window
+(layer 24) with an opaque frozen snapshot of the wallpaper plus menu titles.
+Captured alpha is 255 there and 0 on the built-in display; moving the pointer
+does not change which display does it. A window at layer 24 stays under the
+snapshot, and ordering below another process's status items is refused.
+
+The menu strip is therefore hidden except while Show Desktop is active, detected
+by Dock's layer-18 window covering the display (polled every 0.25 s, so hot
+corners and gestures count too), and only on the Dock's display. While active it
+sits at status level over the whole bar and draws two ScreenCaptureKit captures
+above the live frames: the native `Menubar` window's titles, captured per menu
+bar owner while the bar is still transparent, and the status-item windows,
+recaptured about once a second. Without Screen Recording, or before the current
+owner's titles have been captured, the strip stays hidden and the native
+snapshot shows. A hidden strip cannot reach fullscreen spaces. State changes are
+traced to `~/Library/Logs/Idlesse-menu-strip.log`.
+
+Screen Recording grants follow the code signature, so `build.sh` signs the app
+with the local "SmolRunner Local Release Signing" identity when present; ad-hoc
+rebuilds silently lose the grant. Keep one app copy (`build/Idlesse.app`,
+linked from `~/Applications`): stale copies share the bundle identifier and
+leave duplicate privacy entries. The user confirmed whole-bar motion on
+September 14.
+
 Qualification checkpoint: app source `cb0ef06`, September 12, 2026.
 
 | Requirement | Evidence | Status |

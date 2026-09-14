@@ -3,6 +3,7 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 import UniformTypeIdentifiers
+import ScreenCaptureKit
 
 private final class DesktopWindow: NSPanel {
     override var canBecomeKey: Bool { false }
@@ -159,9 +160,15 @@ final class WallpaperSurface {
 
     func show(paused: Bool) {
         window.orderBack(nil)
-        menuStrip?.window.orderFront(nil)
         setPaused(paused)
     }
+
+    /// Show Desktop swaps the native menu bar on the Dock's display for an
+    /// opaque, frozen snapshot. The strip then covers it with live frames and
+    /// captured native titles and status items. Nil hides the strip: outside a
+    /// reveal the native bar is transparent over the wallpaper anyway, and an
+    /// elevated strip would leak over fullscreen apps.
+    func setRevealOverlay(_ overlay: (titles: CGImage, status: CGImage?)?) { menuStrip?.present(overlay: overlay) }
 
     private(set) var pausedState = false
     func setPaused(_ paused: Bool) { pausedState = paused; renderer.setPaused(paused || covered) }
@@ -794,6 +801,155 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         coverage.tolerance = 1
         RunLoop.main.add(coverage, forMode: .common)
         coverageTimer = coverage
+        let reveal = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.pollMenuStripReveal() }
+        reveal.tolerance = 0.05
+        RunLoop.main.add(reveal, forMode: .common)
+        revealTimer = reveal
+    }
+
+    private var revealTimer: Timer?
+    private var revealedMenuStrips = false
+    /// Native menu titles per menu bar owner, captured while the bar is still
+    /// transparent, so they can be drawn over live frames during Show Desktop.
+    private var menuTitleImages: [pid_t: (image: CGImage, time: TimeInterval)] = [:]
+    private var statusItemsImage: (display: UInt32, image: CGImage, time: TimeInterval)?
+    private var menuCaptureInFlight = false
+
+    /// Show Desktop is detected the way Dock presents it on macOS 26: a Dock
+    /// window at layer 18 covering the display. That covers hot corners and
+    /// gestures too, not only Idlesse's own button.
+    ///
+    /// Only the Dock's display freezes its menu bar into an opaque snapshot;
+    /// the others stay transparent over the live wallpaper and need nothing.
+    /// On the Dock's display the strip covers the whole bar with live frames
+    /// and redraws the native titles and status items from captures. Without
+    /// Screen Recording, or before the current app's titles have been seen, it
+    /// stays hidden and the native snapshot shows as before.
+    private func pollMenuStripReveal() {
+        guard WallpaperSurface.liveMenuStripEnabled, presentsWindows,
+              surfaces.contains(where: { $0.menuStripWindowNumber != nil }) else {
+            if revealedMenuStrips { surfaces.forEach { $0.setRevealOverlay(nil) }; revealedMenuStrips = false }
+            return
+        }
+        let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        func covers(_ window: [String: Any], owner: String, layer: Int, _ display: CGRect) -> Bool {
+            guard window[kCGWindowOwnerName as String] as? String == owner,
+                  window[kCGWindowLayer as String] as? Int == layer,
+                  let dict = window[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: dict) else { return false }
+            return abs(frame.minX - display.minX) < 1 && abs(frame.minY - display.minY) < 1
+                && abs(frame.width - display.width) < 1 && abs(frame.height - display.height) < 1
+        }
+        let owner = NSWorkspace.shared.menuBarOwningApplication?.processIdentifier
+        let now = ProcessInfo.processInfo.systemUptime
+        var revealedAny = false
+        for surface in surfaces {
+            let display = CGDisplayBounds(surface.displayID)
+            let revealed = windows.contains { covers($0, owner: "Dock", layer: 18, display) }
+            let dockDisplay = windows.contains { covers($0, owner: "Dock", layer: Int(CGWindowLevelForKey(.dockWindow)), display) }
+            let access = CGPreflightScreenCaptureAccess()
+            traceMenuStrip("display=\(surface.displayID) dock=\(dockDisplay) revealed=\(revealed) access=\(access) owner=\(owner ?? -1) titles=\(owner.map { menuTitleImages[$0] != nil } ?? false) status=\(statusItemsImage != nil)")
+            guard dockDisplay, access else { surface.setRevealOverlay(nil); continue }
+            if !revealed {
+                surface.setRevealOverlay(nil)
+                // Keep the current owner's titles fresh while they can be captured cleanly.
+                if let owner, now - (menuTitleImages[owner]?.time ?? 0) > 15 {
+                    captureMenuBar(display: surface.displayID, titlesFor: owner)
+                }
+                continue
+            }
+            revealedAny = true
+            if statusItemsImage?.display != surface.displayID || now - (statusItemsImage?.time ?? 0) > 1 {
+                captureMenuBar(display: surface.displayID, titlesFor: nil)
+            }
+            guard let owner, let titles = menuTitleImages[owner]?.image else { surface.setRevealOverlay(nil); continue }
+            let status = statusItemsImage?.display == surface.displayID ? statusItemsImage?.image : nil
+            surface.setRevealOverlay((titles, status))
+        }
+        revealedMenuStrips = revealedAny
+        if menuTitleImages.count > 16, let oldest = menuTitleImages.min(by: { $0.value.time < $1.value.time })?.key {
+            menuTitleImages.removeValue(forKey: oldest)
+        }
+    }
+
+    /// Captures the display's native `Menubar` window (titles only, when `titlesFor`
+    /// is set) or its status items, with transparency. At most one at a time.
+    private func captureMenuBar(display displayID: UInt32, titlesFor owner: pid_t?) {
+        guard !menuCaptureInFlight, #available(macOS 14, *) else { return }
+        menuCaptureInFlight = true
+        let scale = NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == displayID
+        }?.backingScaleFactor ?? 2
+        Task { @MainActor [weak self] in
+            defer { self?.menuCaptureInFlight = false }
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
+                let bounds = CGDisplayBounds(displayID)
+                let configuration = SCStreamConfiguration()
+                configuration.showsCursor = false
+                configuration.backgroundColor = .clear
+                if let owner {
+                    guard let bar = content.windows.first(where: {
+                        $0.title == "Menubar" && abs($0.frame.minX - bounds.minX) < 1 && abs($0.frame.minY - bounds.minY) < 1
+                    }) else { return }
+                    configuration.width = Int(bar.frame.width * scale)
+                    configuration.height = Int(bar.frame.height * scale)
+                    configuration.ignoreShadowsSingleWindow = true
+                    let image = try await SCScreenshotManager.captureImage(
+                        contentFilter: SCContentFilter(desktopIndependentWindow: bar), configuration: configuration)
+                    // A bar that already went opaque would bake a still wallpaper into the titles.
+                    guard NSWorkspace.shared.menuBarOwningApplication?.processIdentifier == owner,
+                          Self.isMostlyTransparent(image) else { self?.traceMenuStrip("titles rejected for \(owner)"); return }
+                    self?.menuTitleImages[owner] = (image, ProcessInfo.processInfo.systemUptime)
+                } else {
+                    let height = CGFloat(NSStatusBar.system.thickness)
+                    let items = content.windows.filter {
+                        $0.windowLayer == Int(CGWindowLevelForKey(.statusWindow))
+                            && $0.owningApplication?.processID != getpid()
+                            && abs($0.frame.minY - bounds.minY) < 1 && $0.frame.height < 60
+                            && $0.frame.minX >= bounds.minX && $0.frame.maxX <= bounds.maxX + 1
+                    }
+                    let barHeight = items.map(\.frame.height).max() ?? height
+                    configuration.sourceRect = CGRect(x: 0, y: 0, width: bounds.width, height: barHeight)
+                    configuration.width = Int(bounds.width * scale)
+                    configuration.height = Int(barHeight * scale)
+                    let image = try await SCScreenshotManager.captureImage(
+                        contentFilter: SCContentFilter(display: display, including: items), configuration: configuration)
+                    self?.statusItemsImage = (displayID, image, ProcessInfo.processInfo.systemUptime)
+                }
+            } catch {
+                NSLog("Idlesse menu bar capture failed: %@", error.localizedDescription)
+                self?.traceMenuStrip("capture failed titles=\(owner != nil): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private var lastMenuStripTrace: [String] = []
+    /// State changes only, to ~/Library/Logs/Idlesse-menu-strip.log.
+    private func traceMenuStrip(_ line: String) {
+        guard !lastMenuStripTrace.contains(line) else { return }
+        lastMenuStripTrace = Array((lastMenuStripTrace + [line]).suffix(4))
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Idlesse-menu-strip.log")
+        let entry = "\(Date()) \(line)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile(); handle.write(Data(entry.utf8)); try? handle.close()
+        } else {
+            try? Data(entry.utf8).write(to: url)
+        }
+    }
+
+    private static func isMostlyTransparent(_ image: CGImage) -> Bool {
+        let width = 64, height = 4
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.interpolationQuality = .low
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let clear = stride(from: 3, to: bytes.count, by: 4).filter { bytes[$0] < 8 }.count
+        return clear * 2 > width * height
     }
 
     private var coverageTimer: Timer?
@@ -1779,6 +1935,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
 
     deinit {
         coverageTimer?.invalidate()
+        revealTimer?.invalidate()
         backdropTask?.cancel()
         loadTask?.cancel()
         screenRefresh?.cancel()
@@ -1833,13 +1990,16 @@ private final class MenuBarStrip {
         window = MenuStripPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
         window.setFrame(frame, display: false)
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
+        // Status level: the frozen reveal snapshot is the Menubar window itself,
+        // and nothing below it is ever seen. `present(gap:)` keeps it hidden
+        // except during Show Desktop, and masked away from native labels.
+        window.level = .statusBar
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = true
         window.hasShadow = false
         window.hidesOnDeactivate = false
         window.isFloatingPanel = false
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
+        window.level = .statusBar
         window.setFrame(frame, display: false)
         window.isReleasedWhenClosed = false
         window.title = "Idlesse Menu Strip Experiment"
@@ -1856,9 +2016,41 @@ private final class MenuBarStrip {
         // acquisition without ever blocking the main wallpaper renderer.
         layer.maximumDrawableCount = 3
         layer.allowsNextDrawableTimeout = true
-        view.layer = layer
+        let root = CALayer()
+        root.frame = view.bounds
+        layer.frame = view.bounds
+        root.addSublayer(layer)
+        for overlay in [titlesLayer, statusLayer] {
+            overlay.frame = view.bounds
+            overlay.contentsGravity = .resize
+            root.addSublayer(overlay)
+        }
+        view.layer = root
         window.contentView = view
     }
+
+    private let titlesLayer = CALayer()
+    private let statusLayer = CALayer()
+    /// Nil hides the strip. Otherwise it covers the whole bar with live frames
+    /// and draws the captured native titles and status items above them.
+    func present(overlay: (titles: CGImage, status: CGImage?)?) {
+        guard let overlay else {
+            if window.isVisible { window.orderOut(nil) }
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if titlesLayer.contents as! CGImage? !== overlay.titles { titlesLayer.contents = overlay.titles }
+        if statusLayer.contents as! CGImage? !== overlay.status { statusLayer.contents = overlay.status }
+        CATransaction.commit()
+        if !window.isVisible {
+            layer.opacity = 0   // shown again by the next completed copy
+            window.orderFrontRegardless()
+            recovery.missedCopy()
+            requestDrawable()
+        }
+    }
+
     func copy(command: MTLCommandBuffer, source: CAMetalDrawable) {
         guard window.isVisible else { return }
         let texture = source.texture

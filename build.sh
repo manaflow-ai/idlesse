@@ -242,7 +242,13 @@ build_app() {
   if ! git -C "$ROOT" diff --quiet 2>/dev/null; then stamp_sha="$stamp_sha-dirty"; fi
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stamp_sha" \
     > "$APP/Contents/Resources/build-stamp.txt"
-  codesign --force --sign - "$APP" >/dev/null
+  # Ad-hoc signatures change every build, so privacy grants (Screen Recording,
+  # Accessibility) reset each time. A local identity keeps them.
+  local identity="${IDLESSE_SIGN_IDENTITY:-}"
+  if [[ -z "$identity" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "SmolRunner Local Release Signing"; then
+    identity="SmolRunner Local Release Signing"
+  fi
+  codesign --force --sign "${identity:--}" "$APP" >/dev/null
 
   log "Development preview ready: $APP"
 }
