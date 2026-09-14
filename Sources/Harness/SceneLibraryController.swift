@@ -251,8 +251,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     init(indexURL: URL? = nil, onUse: @escaping (URL) -> Void, onEdit: @escaping (URL, Bool) -> Void) throws {
         self.onUse = onUse
         self.onEdit = onEdit
-        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        store = try SceneLibraryStore(file: indexURL ?? support.appendingPathComponent("Idlesse/Library/index.json"))
+        store = try SceneLibraryStore(file: indexURL ?? SceneLibraryStore.defaultIndexURL)
         super.init(window: NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 640),
                                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false))
         window?.title = "Idlesse Library"
@@ -1328,6 +1327,35 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
     /// Adds a file the export pipeline just installed, as if it were imported by hand.
     func importInstalledMedia(_ url: URL) { importScenes([url]) }
+
+    /// A wallpaper opened from Finder or `open` joins the Library quietly, so it can be found again.
+    func adoptOpenedMedia(_ url: URL) {
+        guard Self.supportedImport(url) else { return }
+        Task { @MainActor [weak self] in
+            guard let self, (try? await MediaImport.needsConversion(url)) == false else { return }
+            let count = self.store.catalog.entries.count
+            do {
+                let entry = try self.store.add(url)
+                if self.store.catalog.entries.count != count { self.reload(selecting: entry.id) }
+            } catch {
+                NSLog("Idlesse: could not add opened wallpaper to the Library: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    var recentlyRemoved: [SceneLibraryStore.RemovedEntry] { store.recentlyRemoved() }
+
+    func restoreRemoved(_ id: String) {
+        do {
+            let entry = try store.restoreRemoved(id)
+            reload(selecting: entry.id)
+            reportTask("Restored \(Self.displayTitle(entry.title))")
+        } catch {
+            try? store.reloadFromDisk()
+            reload()
+            reportTask(error.localizedDescription)
+        }
+    }
     private func importScenes(_ urls: [URL]) {
         guard conversionTask == nil else {
             reportTask("An import is already running. Try again when it finishes.")

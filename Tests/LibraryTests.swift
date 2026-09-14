@@ -342,6 +342,46 @@ import Foundation
         let oversizedSize = (try FileManager.default.attributesOfItem(atPath: corruptFile.path)[.size] as? NSNumber)?.intValue
         precondition(oversizedSize == SceneLibraryStore.maxIndexBytes + 1)
 
-        print("Library checks passed: v1 migration, mixed bookmarks/sources, relink, path containment, metadata, state preservation, bounds, and corrupt-index preservation")
+        // Two processes holding the same index: a stale writer keeps the other's changes.
+        let sharedFile = folder.appendingPathComponent("Shared/index.json")
+        let first = folder.appendingPathComponent("First.png"), second = folder.appendingPathComponent("Second.png")
+        try Data([4]).write(to: first); try Data([5]).write(to: second)
+        let writerA = try SceneLibraryStore(file: sharedFile)
+        let hina = try writerA.add(first, title: "Hina")
+        try writerA.favorite(hina.id)
+        let writerB = try SceneLibraryStore(file: sharedFile)
+        let otherEntry = try writerA.add(second, title: "Other")
+        try writerB.used(hina.id)  // B never saw Other
+        let merged = try SceneLibraryStore(file: sharedFile).catalog
+        precondition(Set(merged.entries.map(\.id)) == [hina.id, otherEntry.id], "A stale writer dropped another process's entry")
+        precondition(merged.favorites.contains(hina.id) && merged.recent[hina.id] != nil)
+        precondition(writerB.catalog == merged, "The stale writer did not adopt the merged index")
+
+        // A removal is backed up, logged and restorable with its favorite.
+        try writerA.remove(hina.id)
+        let backups = try FileManager.default.contentsOfDirectory(atPath: writerA.backupsFolder.path)
+        precondition(backups.count == 1, "No index backup before a removal")
+        let log = try String(contentsOf: writerA.removalLog, encoding: .utf8)
+        precondition(log.contains("Hina [\(hina.id)]"), "Removal not logged")
+        precondition(writerA.recentlyRemoved().map(\.entry.id) == [hina.id])
+        // An edit from a writer that still has the entry does not bring it back.
+        try writerB.favorite(otherEntry.id)
+        let afterStaleEdit = try SceneLibraryStore(file: sharedFile).catalog
+        precondition(!afterStaleEdit.entries.contains { $0.id == hina.id }, "A stale writer resurrected a removed entry")
+        let restored = try writerB.restoreRemoved(hina.id)
+        let afterRestore = try SceneLibraryStore(file: sharedFile).catalog
+        precondition(restored.id == hina.id && afterRestore.entries.contains { $0.id == hina.id })
+        precondition(afterRestore.favorites.isSuperset(of: [hina.id, otherEntry.id]), "Restore lost a favorite")
+        precondition(writerB.recentlyRemoved().isEmpty)
+        try writerA.reloadFromDisk()
+        precondition(writerA.catalog == afterRestore)
+
+        // An unreadable index on disk is never overwritten by a save.
+        let garbage = Data("not json".utf8)
+        try garbage.write(to: sharedFile)
+        expectFailure("Saved over an unreadable index") { try writerA.used(otherEntry.id) }
+        try assertContents(sharedFile, equal: garbage)
+
+        print("Library checks passed: v1 migration, mixed bookmarks/sources, relink, path containment, metadata, state preservation, bounds, corrupt-index preservation, concurrent writers, and removal recovery")
     }
 }

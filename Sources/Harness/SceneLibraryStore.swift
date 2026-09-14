@@ -251,6 +251,8 @@ final class SceneLibraryStore {
     }
 
     private(set) var catalog = Catalog()
+    /// The index as this store last read or wrote it; a save replays only the change from here.
+    private var base = Catalog()
     let file: URL
 
     init(file: URL) throws {
@@ -265,6 +267,15 @@ final class SceneLibraryStore {
         }
         try validateCatalog(decoded)
         catalog = decoded
+        base = decoded
+    }
+
+    /// Picks up changes another process wrote, dropping nothing this store has not saved.
+    func reloadFromDisk() throws {
+        let (disk, _) = try withIndexLock { try readIndex() }
+        try validateCatalog(disk)
+        catalog = disk
+        base = disk
     }
 
     /// Compatibility resolver. Call `access(_:)` while reading source-backed media.
@@ -643,14 +654,20 @@ final class SceneLibraryStore {
     func commitCatalog(_ proposed: Catalog) throws { try save(proposed) }
 
     private func save(_ proposed: Catalog) throws {
-        var next = proposed
-        next.version = Self.catalogVersion
-        try validateCatalog(next)
-        let data = try JSONEncoder().encode(next)
-        guard data.count <= Self.maxIndexBytes else { throw failure("The Library index is full.") }
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: file, options: .atomic)
-        catalog = next
+        try withIndexLock {
+            let (disk, diskData) = try readIndex()
+            var next = disk == base ? proposed : Self.rebase(proposed, from: base, onto: disk)
+            next.version = Self.catalogVersion
+            try validateCatalog(next)
+            let data = try JSONEncoder().encode(next)
+            guard data.count <= Self.maxIndexBytes else { throw failure("The Library index is full.") }
+            let kept = Set(next.entries.map(\.id))
+            let removed = disk.entries.filter { !kept.contains($0.id) }
+            if !removed.isEmpty { journalRemoval(removed, previous: disk, previousData: diskData) }
+            try data.write(to: file, options: .atomic)
+            catalog = next
+            base = next
+        }
     }
 
     private static func validMetadata(_ value: [String: String]?, maxPairs: Int) -> Bool {

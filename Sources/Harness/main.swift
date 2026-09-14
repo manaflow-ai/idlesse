@@ -48,6 +48,11 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         editor.show()
     }
     private var lobbyImport: LobbyImportController?
+    private lazy var recentlyRemovedMenu = RecentlyRemovedMenu { [weak self] in
+        guard let self else { return nil }
+        try? self.prepareLibrary()
+        return self.library
+    }
     @objc private func showLobbyImport() {
         if let lobbyImport { lobbyImport.show(); return }
         guard let pipeline = MediaPipeline.discover() else {
@@ -233,8 +238,7 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         NSApp.activate(ignoringOtherApps: true)
 
         do {
-            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let catalog = try SceneLibraryStore(file: support.appendingPathComponent("Idlesse/Library/index.json")).catalog
+            let catalog = try SceneLibraryStore(file: SceneLibraryStore.defaultIndexURL).catalog
             if catalog.collections.contains(where: { $0.playback?.startMinute != nil }) { try prepareLibrary() }
         } catch { NSLog("Idlesse: saved Library schedules unavailable: %@", error.localizedDescription) }
 
@@ -264,6 +268,8 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             scenePreview.openLibraryScene(url, asCopy: false)
         case .wallpaperMedia:
             wallpaper.select(url)
+            do { try prepareLibrary(); library?.adoptOpenedMedia(url) }
+            catch { NSLog("Idlesse: Library unavailable for an opened wallpaper: %@", error.localizedDescription) }
         case .deepLink:
             switch url.host {
             case "wallpapers": showLibrary()
@@ -516,6 +522,8 @@ final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         framingItem.target = self
         let lobbyItem = wallpaperMenu.addItem(withTitle: "Import Lobby…", action: #selector(showLobbyImport), keyEquivalent: "")
         lobbyItem.target = self
+        let removedItem = wallpaperMenu.addItem(withTitle: "Recently Removed", action: nil, keyEquivalent: "")
+        removedItem.submenu = recentlyRemovedMenu.menu
         wallpaperMenu.addItem(.separator())
         comfort.addDesktopIconsItem(to: wallpaperMenu)
         let bedtime = wallpaperMenu.addItem(withTitle: "Bedtime Display…", action: #selector(DesktopComfortController.showSettings), keyEquivalent: "")

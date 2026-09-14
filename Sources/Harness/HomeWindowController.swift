@@ -84,8 +84,7 @@ final class HomeWindowController: NSObject, NSTableViewDataSource, NSTableViewDe
         if let indexURL {
             self.indexURL = indexURL
         } else {
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            self.indexURL = support.appendingPathComponent("Idlesse/Library/index.json")
+            self.indexURL = SceneLibraryStore.defaultIndexURL
         }
         super.init()
         // main.swift installs the legacy Settings owner before AppSettings is
