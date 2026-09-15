@@ -168,7 +168,9 @@ final class WallpaperSurface {
     /// captured native titles and status items. Nil hides the strip: outside a
     /// reveal the native bar is transparent over the wallpaper anyway, and an
     /// elevated strip would leak over fullscreen apps.
-    func setRevealOverlay(_ overlay: (titles: CGImage, status: CGImage?)?) { menuStrip?.present(overlay: overlay) }
+    func setRevealOverlay(_ overlay: (titles: CGImage, status: CGImage?)?, fade: TimeInterval = 0) {
+        menuStrip?.present(overlay: overlay, fade: fade)
+    }
 
     private(set) var pausedState = false
     func setPaused(_ paused: Bool) { pausedState = paused; renderer.setPaused(paused || covered) }
@@ -801,10 +803,11 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         coverage.tolerance = 1
         RunLoop.main.add(coverage, forMode: .common)
         coverageTimer = coverage
-        let reveal = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.pollMenuStripReveal() }
-        reveal.tolerance = 0.05
+        let reveal = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.refreshMenuStripWatch() }
+        reveal.tolerance = 0.2
         RunLoop.main.add(reveal, forMode: .common)
         revealTimer = reveal
+        refreshMenuStripWatch()
     }
 
     private var revealTimer: Timer?
@@ -814,6 +817,25 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     private var menuTitleImages: [pid_t: (image: CGImage, time: TimeInterval)] = [:]
     private var statusItemsImage: (display: UInt32, image: CGImage, time: TimeInterval)?
     private var menuCaptureInFlight = false
+
+    private struct RevealState: Equatable { var revealed = false; var dock = false }
+    /// Watching runs off the main thread: one window list costs a millisecond or
+    /// two, occasionally fifty, which must never land on the render path.
+    private let revealQueue = DispatchQueue(label: "Idlesse.MenuStrip.Reveal", qos: .userInitiated)
+    private let revealTargetsLock = NSLock()
+    private var revealTargets: [UInt32: CGRect] = [:]        // guarded by revealTargetsLock
+    private var revealWatch: DispatchSourceTimer?
+    private var revealDelivered: [UInt32: RevealState] = [:] // revealQueue only
+    private var revealedDisplays: Set<UInt32> = []
+    private var dockDisplays: Set<UInt32> = []
+    private var revealStarted: [UInt32: TimeInterval] = [:]
+    /// Displays whose strip is held up through the restore animation, by deadline.
+    private var revealExitHold: [UInt32: TimeInterval] = [:]
+    /// Measured on macOS 26 over three runs: the Dock drops its reveal window
+    /// 1.01–1.09 s before the native bar stops being a frozen snapshot. Hiding
+    /// the strip any earlier shows that still frame for the rest of the restore.
+    private static let menuBarThawDelay: TimeInterval = 1
+    private static let menuBarThawFade: TimeInterval = 0.25
 
     /// Show Desktop is detected the way Dock presents it on macOS 26: a Dock
     /// window at layer 18 covering the display. That covers hot corners and
@@ -825,52 +847,140 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     /// and redraws the native titles and status items from captures. Without
     /// Screen Recording, or before the current app's titles have been seen, it
     /// stays hidden and the native snapshot shows as before.
-    private func pollMenuStripReveal() {
-        guard WallpaperSurface.liveMenuStripEnabled, presentsWindows,
-              surfaces.contains(where: { $0.menuStripWindowNumber != nil }) else {
+    ///
+    /// Nothing in the reveal path runs on the main thread except the state
+    /// changes themselves, and the ~100 ms captures only run while the desktop
+    /// is at rest, so neither animation has to share time with this.
+    private func refreshMenuStripWatch() {
+        var targets: [UInt32: CGRect] = [:]
+        if WallpaperSurface.liveMenuStripEnabled, presentsWindows {
+            for surface in surfaces where surface.menuStripWindowNumber != nil {
+                targets[surface.displayID] = CGDisplayBounds(surface.displayID)
+            }
+        }
+        revealTargetsLock.lock(); revealTargets = targets; revealTargetsLock.unlock()
+        guard !targets.isEmpty else {
+            stopRevealWatch()
             if revealedMenuStrips { surfaces.forEach { $0.setRevealOverlay(nil) }; revealedMenuStrips = false }
+            revealedDisplays.removeAll(); revealExitHold.removeAll(); dockDisplays.removeAll()
             return
         }
-        let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        func covers(_ window: [String: Any], owner: String, layer: Int, _ display: CGRect) -> Bool {
-            guard window[kCGWindowOwnerName as String] as? String == owner,
-                  window[kCGWindowLayer as String] as? Int == layer,
-                  let dict = window[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: dict) else { return false }
-            return abs(frame.minX - display.minX) < 1 && abs(frame.minY - display.minY) < 1
-                && abs(frame.width - display.width) < 1 && abs(frame.height - display.height) < 1
-        }
-        let owner = NSWorkspace.shared.menuBarOwningApplication?.processIdentifier
+        startRevealWatch()
+        guard CGPreflightScreenCaptureAccess() else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        var revealedAny = false
-        for surface in surfaces {
-            let display = CGDisplayBounds(surface.displayID)
-            let revealed = windows.contains { covers($0, owner: "Dock", layer: 18, display) }
-            let dockDisplay = windows.contains { covers($0, owner: "Dock", layer: Int(CGWindowLevelForKey(.dockWindow)), display) }
-            let access = CGPreflightScreenCaptureAccess()
-            traceMenuStrip("display=\(surface.displayID) dock=\(dockDisplay) revealed=\(revealed) access=\(access) owner=\(owner ?? -1) titles=\(owner.map { menuTitleImages[$0] != nil } ?? false) status=\(statusItemsImage != nil)")
-            guard dockDisplay, access else { surface.setRevealOverlay(nil); continue }
-            if !revealed {
-                surface.setRevealOverlay(nil)
-                // Keep the current owner's titles fresh while they can be captured cleanly.
-                if let owner, now - (menuTitleImages[owner]?.time ?? 0) > 15 {
-                    captureMenuBar(display: surface.displayID, titlesFor: owner)
+        for displayID in targets.keys where dockDisplays.contains(displayID) {
+            // Never while a reveal or restore animation is on screen.
+            guard revealExitHold[displayID] == nil,
+                  now - (revealStarted[displayID] ?? 0) > 0.5 else { continue }
+            if revealedDisplays.contains(displayID) {
+                if statusItemsImage?.display != displayID || now - (statusItemsImage?.time ?? 0) > 1 {
+                    captureMenuBar(display: displayID, titlesFor: nil)
                 }
                 continue
             }
-            revealedAny = true
-            if statusItemsImage?.display != surface.displayID || now - (statusItemsImage?.time ?? 0) > 1 {
-                captureMenuBar(display: surface.displayID, titlesFor: nil)
+            // Keep the owner's titles, and a clock no more than a few seconds
+            // stale, ready for the next reveal; both capture cleanly at rest.
+            if let owner = NSWorkspace.shared.menuBarOwningApplication?.processIdentifier,
+               now - (menuTitleImages[owner]?.time ?? 0) > 15 {
+                captureMenuBar(display: displayID, titlesFor: owner)
+            } else if statusItemsImage?.display != displayID || now - (statusItemsImage?.time ?? 0) > 10 {
+                captureMenuBar(display: displayID, titlesFor: nil)
             }
-            guard let owner, let titles = menuTitleImages[owner]?.image else { surface.setRevealOverlay(nil); continue }
-            let status = statusItemsImage?.display == surface.displayID ? statusItemsImage?.image : nil
-            surface.setRevealOverlay((titles, status))
+        }
+    }
+
+    private func startRevealWatch() {
+        guard revealWatch == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: revealQueue)
+        timer.schedule(deadline: .now() + 0.05, repeating: 0.05, leeway: .milliseconds(10))
+        timer.setEventHandler { [weak self] in self?.tickRevealWatch() }
+        timer.resume()
+        revealWatch = timer
+    }
+
+    private func stopRevealWatch() {
+        revealWatch?.cancel()
+        revealWatch = nil
+        revealQueue.async { [weak self] in self?.revealDelivered = [:] }
+    }
+
+    /// Runs on `revealQueue`; reports only changes to the main thread.
+    private func tickRevealWatch() {
+        revealTargetsLock.lock(); let targets = revealTargets; revealTargetsLock.unlock()
+        guard !targets.isEmpty else { return }
+        let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let dockLayer = Int(CGWindowLevelForKey(.dockWindow))
+        var fresh: [UInt32: RevealState] = [:]
+        for (displayID, bounds) in targets {
+            var state = RevealState()
+            for window in windows {
+                guard window[kCGWindowOwnerName as String] as? String == "Dock",
+                      let layer = window[kCGWindowLayer as String] as? Int,
+                      layer == 18 || layer == dockLayer,
+                      let dict = window[kCGWindowBounds as String] as? NSDictionary,
+                      let frame = CGRect(dictionaryRepresentation: dict),
+                      abs(frame.minX - bounds.minX) < 1, abs(frame.minY - bounds.minY) < 1,
+                      abs(frame.width - bounds.width) < 1, abs(frame.height - bounds.height) < 1
+                else { continue }
+                if layer == 18 { state.revealed = true } else { state.dock = true }
+            }
+            fresh[displayID] = state
+        }
+        guard fresh != revealDelivered else { return }
+        revealDelivered = fresh
+        DispatchQueue.main.async { [weak self] in self?.applyRevealState(fresh) }
+    }
+
+    private func applyRevealState(_ fresh: [UInt32: RevealState]) {
+        let owner = NSWorkspace.shared.menuBarOwningApplication?.processIdentifier
+        let access = CGPreflightScreenCaptureAccess()
+        let now = ProcessInfo.processInfo.systemUptime
+        var revealedAny = false
+        for surface in surfaces {
+            guard let state = fresh[surface.displayID] else { continue }
+            if state.dock { dockDisplays.insert(surface.displayID) } else { dockDisplays.remove(surface.displayID) }
+            traceMenuStrip("display=\(surface.displayID) dock=\(state.dock) revealed=\(state.revealed) access=\(access) owner=\(owner ?? -1) titles=\(owner.map { menuTitleImages[$0] != nil } ?? false) status=\(statusItemsImage != nil)")
+            guard state.dock, access else {
+                surface.setRevealOverlay(nil)
+                revealedDisplays.remove(surface.displayID)
+                revealExitHold[surface.displayID] = nil
+                continue
+            }
+            if state.revealed {
+                revealExitHold[surface.displayID] = nil
+                if revealedDisplays.insert(surface.displayID).inserted { revealStarted[surface.displayID] = now }
+                guard let owner, let titles = menuTitleImages[owner]?.image else { surface.setRevealOverlay(nil); continue }
+                let status = statusItemsImage?.display == surface.displayID ? statusItemsImage?.image : nil
+                surface.setRevealOverlay((titles, status))
+                revealedAny = true
+            } else if revealedDisplays.remove(surface.displayID) != nil {
+                // Restore has started. The strip keeps playing over the frozen
+                // native bar, untouched, until one scheduled fade takes it down
+                // across the moment the real bar comes back.
+                let deadline = now + Self.menuBarThawDelay
+                revealExitHold[surface.displayID] = deadline
+                let displayID = surface.displayID
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.menuBarThawDelay) { [weak self] in
+                    self?.finishRevealExit(display: displayID, deadline: deadline)
+                }
+                revealedAny = true
+            } else if revealExitHold[surface.displayID] != nil {
+                revealedAny = true
+            }
         }
         revealedMenuStrips = revealedAny
         if menuTitleImages.count > 16, let oldest = menuTitleImages.min(by: { $0.value.time < $1.value.time })?.key {
             menuTitleImages.removeValue(forKey: oldest)
         }
+    }
+
+    private func finishRevealExit(display displayID: UInt32, deadline: TimeInterval) {
+        guard revealExitHold[displayID] == deadline else { return }
+        revealExitHold[displayID] = nil
+        // Hold captures off for a moment longer: the fade is still running.
+        revealStarted[displayID] = ProcessInfo.processInfo.systemUptime
+        surfaces.first { $0.displayID == displayID }?.setRevealOverlay(nil, fade: Self.menuBarThawFade)
     }
 
     /// Captures the display's native `Menubar` window (titles only, when `titlesFor`
@@ -900,8 +1010,10 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                     let image = try await SCScreenshotManager.captureImage(
                         contentFilter: SCContentFilter(desktopIndependentWindow: bar), configuration: configuration)
                     // A bar that already went opaque would bake a still wallpaper into the titles.
-                    guard NSWorkspace.shared.menuBarOwningApplication?.processIdentifier == owner,
-                          Self.isMostlyTransparent(image) else { self?.traceMenuStrip("titles rejected for \(owner)"); return }
+                    let transparent = Self.isMostlyTransparent(image)
+                    guard transparent,
+                          NSWorkspace.shared.menuBarOwningApplication?.processIdentifier == owner
+                    else { self?.traceMenuStrip("titles rejected for \(owner) transparent=\(transparent)"); return }
                     self?.menuTitleImages[owner] = (image, ProcessInfo.processInfo.systemUptime)
                 } else {
                     let height = CGFloat(NSStatusBar.system.thickness)
@@ -1936,6 +2048,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     deinit {
         coverageTimer?.invalidate()
         revealTimer?.invalidate()
+        revealWatch?.cancel()
         backdropTask?.cancel()
         loadTask?.cancel()
         screenRefresh?.cancel()
@@ -2031,12 +2144,31 @@ private final class MenuBarStrip {
 
     private let titlesLayer = CALayer()
     private let statusLayer = CALayer()
-    /// Nil hides the strip. Otherwise it covers the whole bar with live frames
-    /// and draws the captured native titles and status items above them.
-    func present(overlay: (titles: CGImage, status: CGImage?)?) {
+    private var fadeGeneration = 0
+    /// Nil hides the strip, over `fade` seconds when given: the native bar thaws
+    /// somewhere inside that window, so neither handover direction shows a cut.
+    /// Otherwise the strip covers the whole bar with live frames and draws the
+    /// captured native titles and status items above them.
+    func present(overlay: (titles: CGImage, status: CGImage?)?, fade: TimeInterval = 0) {
         guard let overlay else {
-            if window.isVisible { window.orderOut(nil) }
+            guard window.isVisible else { return }
+            fadeGeneration += 1
+            guard fade > 0 else { window.alphaValue = 1; window.orderOut(nil); return }
+            let generation = fadeGeneration
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = fade
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, self.fadeGeneration == generation else { return }
+                self.window.orderOut(nil)
+                self.window.alphaValue = 1
+            })
             return
+        }
+        if window.alphaValue != 1 {
+            fadeGeneration += 1   // cancels a fade that is still running
+            window.alphaValue = 1
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
