@@ -1,6 +1,6 @@
 # Desktop usability qualification
 
-## September 14 Show Desktop menu motion
+## September 14 Show Desktop menu motion (supersedes the correction below)
 
 During Show Desktop the Dock's display replaces its native `Menubar` window
 (layer 24) with an opaque frozen snapshot of the wallpaper plus menu titles.
@@ -25,6 +25,85 @@ rebuilds silently lose the grant. Keep one app copy (`build/Idlesse.app`,
 linked from `~/Applications`): stale copies share the bundle identifier and
 leave duplicate privacy entries. The user confirmed whole-bar motion on
 September 14.
+
+## September 15 transition timing
+
+Both Show Desktop transitions were measured with a live ScreenCaptureKit stream
+on the native `Menubar` window, which reports the frozen snapshot appearing and
+going away without per-sample capture cost, while a window-list sampler recorded
+the Dock's reveal window. Three runs each, external display, macOS 26:
+
+| Edge | Event | Measured |
+| --- | --- | --- |
+| Reveal | Dock reveal window → bar frozen | 29, 30, 65 ms |
+| Restore | Dock reveal window gone → bar transparent again | 1012, 1028, 1089 ms |
+
+The Dock therefore drops its reveal window about a second before the native bar
+comes back, so hiding the strip when that window disappears leaves the frozen
+snapshot on screen for the rest of the restore animation. The strip now stays up
+for a fixed second after the reveal window goes and then fades out over 0.25 s,
+which straddles the handover in both directions. Verified by window-list alpha
+samples: the strip was still fully opaque at the moment the bar thawed and gone
+about 250 ms later.
+
+Reveal detection moved off the main thread. One window list costs 1.8 ms at the
+median, 3.7 ms at p90 and occasionally 50 ms, so it runs on a background queue
+every 50 ms and only state changes hop to the main thread (measured at 0 ms hop,
+3 ms to present, 56 ms to the first copied frame). A `SCScreenshotManager`
+capture costs about 100 ms, so captures are now confined to periods when nothing
+is animating: never within 0.5 s of a reveal, never during the restore hold or
+fade. An earlier attempt that probed the bar's transparency every 80 ms during
+the restore produced visible jitter and was replaced by the fixed hold.
+
+## September 14 correction
+
+The status-level Show Desktop workaround below has been removed: promoting a
+wallpaper strip over the native menu can leak into fullscreen content. Menu
+strips now stay immediately above their desktop surface, strictly below normal
+application windows. Show Desktop no longer captures menu labels, delays reveal
+for capture, or uses private SkyLight ordering. The native menu background may
+remain still; the earlier motion results do not qualify this revised behavior.
+Fullscreen visual verification is still required.
+
+## Historical Show Desktop menu background — September 13
+
+The external display's native Menubar window becomes opaque during Show Desktop,
+covering the still-moving GPU strip. The built-in display's native menu remains
+transparent. Independent-window captures confirmed that difference; reverting the
+monitor-sync build and toggling the system menu-background setting did not fix it.
+The system setting was restored to off.
+
+The macOS 26 fallback captures one transparent native menu-label image in memory
+before Idlesse invokes Show Desktop. It temporarily puts the existing live strip
+above the opaque backdrop, below native status items, and overlays those labels.
+The window stays click-through. No extra decoder, video recording, or saved
+capture is used. A weak-linked SkyLight sublevel call affects only Idlesse's own
+window; unavailable APIs, missing permission, opaque captures, and capture timeouts
+leave the ordinary strip in place. Screen Recording permission is required.
+
+A state-aware ScreenCaptureKit probe checks Dock reveal geometry before and after
+each small-region sample, without activating apps or saving screenshots:
+
+```sh
+swiftc -parse-as-library scripts/probe-menu-bar-motion.swift -o build/probe-menu-bar-motion
+build/probe-menu-bar-motion
+```
+
+With Hina and Show Desktop active throughout, the diagnostic launch measured
+external visible/beneath-native-menu deltas of 22.186/22.952 and built-in deltas
+of 12.226/11.156. Both moved. Native menu labels and status icons were visually
+present; File menu interaction worked. Restoring windows reset strip ordering.
+Video preparation and targeted-assignment smoke tests passed.
+
+Screen Recording was subsequently enabled for the canonical app through System
+Settings. Normal-launch capture logged one prepared label layer, but the subsequent
+probe found Show Desktop absent; that run is inconclusive, not another motion pass.
+Further repeated visual verification was stopped at the user's request.
+
+Scope: Idlesse-triggered reveal, external displays, macOS 26, transparent native
+menu background, and Animate menu bar enabled. Native hotkeys/hot corners outside
+Idlesse are not independently primed. Ad-hoc-signed rebuilds may need permission
+reauthorization. Small-region motion is not proof of full-display scanout sync.
 
 Qualification checkpoint: app source `cb0ef06`, September 12, 2026.
 

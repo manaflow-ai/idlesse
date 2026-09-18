@@ -2,6 +2,25 @@ import AppKit
 import ScreenSaver
 import UniformTypeIdentifiers
 
+// Ask the existing app for a compositor capture; do not launch another UI.
+if CommandLine.arguments.contains("--capture-window") || CommandLine.arguments.contains("--capture-layout") {
+    let token = UUID().uuidString
+    let output = "/tmp/idlesse-window-\(token).png"
+    DistributedNotificationCenter.default().postNotificationName(
+        Notification.Name("com.teamleaderleo.idlesse.capture-window"), object: token,
+        userInfo: ["layoutOnly": CommandLine.arguments.contains("--capture-layout")], deliverImmediately: true)
+    let deadline = Date().addingTimeInterval(12)
+    while Date() < deadline {
+        if FileManager.default.fileExists(atPath: output) { print(output); exit(EXIT_SUCCESS) }
+        if let error = try? String(contentsOfFile: output + ".error", encoding: .utf8) {
+            fputs("Window capture failed: \(error)\n", stderr); exit(EXIT_FAILURE)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+    fputs("Window capture timed out. Open the running app's Library window.\n", stderr)
+    exit(EXIT_FAILURE)
+}
+
 final class IdlesseAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var window: NSWindow!
     private var saverView: IdlesseView!

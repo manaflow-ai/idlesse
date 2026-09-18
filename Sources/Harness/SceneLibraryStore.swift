@@ -1,16 +1,8 @@
 import Foundation
 
-/// A bounded index of references. Original media stays where the user put it.
+/// An index of references. Original media stays where the user put it.
 final class SceneLibraryStore {
     static let catalogVersion = 2
-    static let maxEntries = maxIndividualEntries // Compatibility alias: individually bookmarked entries.
-    /// Matches the Source bound. A bookmark is under a kilobyte in practice, so
-    /// the index-size cap below, not this count, is what bounds memory.
-    static let maxIndividualEntries = 4096
-    static let maxSourceEntries = 4096
-    static let maxSources = 32
-    /// JSON remains a bounded compatibility/migration source until the SQLite catalog lands.
-    static let maxIndexBytes = 16_777_216
     static let maxBookmarkBytes = 16_384
 
     struct Entry: Codable, Equatable, Sendable {
@@ -131,7 +123,7 @@ final class SceneLibraryStore {
         }
     }
 
-    struct SourceRoot: Codable, Equatable {
+    struct SourceRoot: Codable, Equatable, Sendable {
         var id: String
         var name: String
         var bookmark: Data
@@ -256,9 +248,6 @@ final class SceneLibraryStore {
     init(file: URL) throws {
         self.file = file
         guard FileManager.default.fileExists(atPath: file.path) else { return }
-        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-        let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
-        guard size <= Self.maxIndexBytes else { throw failure("The Library index is too large.") }
         let decoded = try JSONDecoder().decode(Catalog.self, from: Data(contentsOf: file))
         guard (1...Self.catalogVersion).contains(decoded.version) else {
             throw failure("This Library index was written by a newer Idlesse version.")
@@ -270,9 +259,27 @@ final class SceneLibraryStore {
     /// Compatibility resolver. Call `access(_:)` while reading source-backed media.
     func resolve(_ entry: Entry) throws -> URL { try access(entry).url }
 
-    func access(_ entry: Entry) throws -> Access {
+    /// Captures reference data without resolving bookmarks or reading the filesystem.
+    /// Workers may resolve this value without touching the mutable catalog.
+    struct AccessRequest: Sendable {
+        let entry: Entry
+        let source: SourceRoot?
+        func open() throws -> Access { try SceneLibraryStore.resolve(entry, source: source) }
+        func openPoster() throws -> Access? {
+            guard entry.availability == .present, let source, let relative = entry.relativePosterPath else { return nil }
+            return try SceneLibraryStore.access(relativePath: relative, source: source)
+        }
+    }
+
+    func accessRequest(_ entry: Entry) -> AccessRequest {
+        AccessRequest(entry: entry, source: catalog.sources.first { $0.id == entry.sourceID })
+    }
+    func access(_ entry: Entry) throws -> Access { try accessRequest(entry).open() }
+    func accessPoster(_ entry: Entry) throws -> Access? { try accessRequest(entry).openPoster() }
+
+    private static func resolve(_ entry: Entry, source: SourceRoot?) throws -> Access {
         guard entry.availability == .present else {
-            throw failure("This Library item is missing from its Source. Rescan the Source to reconcile it.")
+            throw libraryFailure("This Library item is missing from its Source. Rescan the Source to reconcile it.")
         }
         if let bookmark = entry.bookmark {
             var stale = false
@@ -281,30 +288,20 @@ final class SceneLibraryStore {
                 url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI],
                               relativeTo: nil, bookmarkDataIsStale: &stale)
             } catch {
-                // Older imports may contain a regular bookmark rather than a
-                // security-scoped one. Resolve that format without prompting.
                 url = try URL(resolvingBookmarkData: bookmark, options: [.withoutUI],
                               relativeTo: nil, bookmarkDataIsStale: &stale)
             }
             return Access(url: url, scopeURL: url, sourceID: nil)
         }
-        guard let sourceID = entry.sourceID, let relative = entry.relativeMediaPath,
-              let source = catalog.sources.first(where: { $0.id == sourceID }) else {
-            throw failure("This Library entry has no usable source reference.")
+        guard let source, let relative = entry.relativeMediaPath else {
+            throw libraryFailure("This Library entry has no usable source reference.")
         }
-        return try access(relativePath: relative, source: source)
-    }
-
-    func accessPoster(_ entry: Entry) throws -> Access? {
-        guard entry.availability == .present else { return nil }
-        guard let sourceID = entry.sourceID, let relative = entry.relativePosterPath,
-              let source = catalog.sources.first(where: { $0.id == sourceID }) else { return nil }
         return try access(relativePath: relative, source: source)
     }
 
     func accessSource(_ sourceID: String) throws -> Access {
         guard let source = catalog.sources.first(where: { $0.id == sourceID }) else { throw failure("Source no longer exists.") }
-        return try accessSourceRoot(source)
+        return try Self.accessSourceRoot(source)
     }
 
     @discardableResult func add(_ url: URL, title: String? = nil) throws -> Entry {
@@ -312,10 +309,6 @@ final class SceneLibraryStore {
             guard $0.bookmark != nil else { return false }
             return (try? resolve($0).standardizedFileURL) == url.standardizedFileURL
         }) { return existing }
-        let individualCount = catalog.entries.filter { $0.bookmark != nil }.count
-        guard individualCount < Self.maxIndividualEntries else {
-            throw failure("The Library supports up to \(Self.maxIndividualEntries) individually imported scenes. Add a Source for a larger folder.")
-        }
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -332,20 +325,18 @@ final class SceneLibraryStore {
     @discardableResult
     func addSource(_ url: URL, name: String? = nil, catalogMetadata: [String: String]? = nil,
                    entries: [SourceEntry] = []) throws -> SourceRoot {
-        guard entries.count <= Self.maxSourceEntries else { throw failure("A Source can contain up to 4096 Library entries.") }
         let root = url.standardizedFileURL
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw failure("Choose an available folder for this Source.")
         }
         if let existing = catalog.sources.first(where: { source in
-            guard let access = try? accessSourceRoot(source) else { return false }
+            guard let access = try? Self.accessSourceRoot(source) else { return false }
             return access.url.resolvingSymlinksInPath().standardizedFileURL == root.resolvingSymlinksInPath().standardizedFileURL
         }) {
             if !entries.isEmpty { _ = try addSourceEntries(existing.id, entries) }
             return catalog.sources.first(where: { $0.id == existing.id }) ?? existing
         }
-        guard catalog.sources.count < Self.maxSources else { throw failure("The Library supports up to 32 Sources.") }
         let accessed = root.startAccessingSecurityScopedResource()
         defer { if accessed { root.stopAccessingSecurityScopedResource() } }
         let bookmark = try root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -363,7 +354,6 @@ final class SceneLibraryStore {
     @discardableResult
     func addSourceEntries(_ sourceID: String, _ entries: [SourceEntry]) throws -> [Entry] {
         guard catalog.sources.contains(where: { $0.id == sourceID }) else { throw failure("Source no longer exists.") }
-        guard entries.count <= Self.maxSourceEntries else { throw failure("A Source can contain up to 4096 Library entries.") }
         var next = catalog
         let added = try makeEntries(entries, sourceID: sourceID, existing: next.entries)
         next.entries.append(contentsOf: added)
@@ -410,6 +400,17 @@ final class SceneLibraryStore {
         next.recent[id] = Date()
         while next.recent.count > 256, let oldest = next.recent.min(by: { $0.value < $1.value })?.key {
             next.recent.removeValue(forKey: oldest)
+        }
+        try save(next)
+    }
+    func restoreRemovedEntry(_ entry: Entry, favorite: Bool, recent: Date?, collectionIDs: [String]) throws {
+        guard !catalog.entries.contains(where: { $0.id == entry.id }) else { return }
+        var next = catalog
+        next.entries.append(entry)
+        if favorite { next.favorites.insert(entry.id) }
+        if let recent { next.recent[entry.id] = recent }
+        for index in next.collections.indices where collectionIDs.contains(next.collections[index].id) {
+            if !next.collections[index].sceneIDs.contains(entry.id) { next.collections[index].sceneIDs.append(entry.id) }
         }
         try save(next)
     }
@@ -521,40 +522,37 @@ final class SceneLibraryStore {
                 duration: draft.duration, provenance: draft.provenance,
                 availability: .present, observation: draft.observation))
         }
-        guard existing.filter({ $0.sourceID != nil }).count + result.count <= Self.maxSourceEntries else {
-            throw failure("The Library supports up to 4096 source-backed entries.")
-        }
         return result
     }
 
-    private func access(relativePath: String, source: SourceRoot) throws -> Access {
+    private static func access(relativePath: String, source: SourceRoot) throws -> Access {
         let relative = try Self.validatedRelativePath(relativePath)
         let rootAccess = try accessSourceRoot(source)
         let target = rootAccess.url.appendingPathComponent(relative).standardizedFileURL
         guard Self.isDescendant(target, of: rootAccess.url) else {
-            throw failure("Source path escapes the authorized folder.")
+            throw libraryFailure("Source path escapes the authorized folder.")
         }
         let resolvedRoot = rootAccess.url.resolvingSymlinksInPath().standardizedFileURL
         let resolvedTarget = target.resolvingSymlinksInPath().standardizedFileURL
         guard Self.isDescendant(resolvedTarget, of: resolvedRoot) else {
-            throw failure("Source path resolves outside the authorized folder.")
+            throw libraryFailure("Source path resolves outside the authorized folder.")
         }
         return Access(url: target, scopeURL: rootAccess.url, sourceID: source.id)
     }
 
-    private func accessSourceRoot(_ source: SourceRoot) throws -> Access {
+    private static func accessSourceRoot(_ source: SourceRoot) throws -> Access {
         let root: URL
         do {
             var stale = false
             root = try URL(resolvingBookmarkData: source.bookmark, options: [.withSecurityScope, .withoutUI],
                            relativeTo: nil, bookmarkDataIsStale: &stale).standardizedFileURL
         } catch {
-            throw failure("Source “\(source.name)” is unavailable. Use Relink Source… to choose its folder again.")
+            throw libraryFailure("Source “\(source.name)” is unavailable. Use Relink Source… to choose its folder again.")
         }
         let access = Access(url: root, scopeURL: root, sourceID: source.id)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw failure("Source “\(source.name)” is unavailable. Use Relink Source… to choose its folder again.")
+            throw libraryFailure("Source “\(source.name)” is unavailable. Use Relink Source… to choose its folder again.")
         }
         return access
     }
@@ -567,14 +565,9 @@ final class SceneLibraryStore {
     }
 
     private func validateCatalog(_ value: Catalog) throws {
-        guard value.entries.count <= Self.maxIndividualEntries + Self.maxSourceEntries,
-              value.entries.filter({ $0.bookmark != nil }).count <= Self.maxIndividualEntries,
-              value.entries.filter({ $0.sourceID != nil }).count <= Self.maxSourceEntries,
-              value.sources.count <= Self.maxSources,
-              value.favorites.count <= 256, value.recent.count <= 256,
-              Set(value.entries.map(\.id)).count == value.entries.count,
+        guard Set(value.entries.map(\.id)).count == value.entries.count,
               Set(value.sources.map(\.id)).count == value.sources.count
-        else { throw failure("The Library index exceeds its limits.") }
+        else { throw failure("The Library index contains duplicate entry or Source identifiers.") }
 
         let sourceIDs = Set(value.sources.map(\.id))
         for source in value.sources {
@@ -640,11 +633,10 @@ final class SceneLibraryStore {
             guard value.collections.filter({ $0.playback?.contains(minute, weekday: weekday) == true }).count <= 1
             else { throw failure("Collection schedules cannot overlap on the same day. Adjust the other collection first.") }
         }
-        guard value.collections.count <= 32,
-              Set(value.collections.map(\.id)).count == value.collections.count,
+        guard Set(value.collections.map(\.id)).count == value.collections.count,
               Set(value.collections.map { $0.name.lowercased() }).count == value.collections.count,
-              value.collections.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.utf8.count <= 120 && $0.id.utf8.count <= 128 && $0.sceneIDs.count <= 256 && Set($0.sceneIDs).count == $0.sceneIDs.count && $0.sceneIDs.allSatisfy { $0.utf8.count <= 128 } })
-        else { throw failure("Use unique collection names (1–120 bytes), with at most 32 collections and 256 scenes each.") }
+              value.collections.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.utf8.count <= 120 && $0.id.utf8.count <= 128 && Set($0.sceneIDs).count == $0.sceneIDs.count && $0.sceneIDs.allSatisfy { $0.utf8.count <= 128 } })
+        else { throw failure("Use unique collection names (1–120 bytes) and unique item identifiers.") }
     }
 
     /// Internal transactional hook used by reconciliation and the durable backend.
@@ -655,7 +647,6 @@ final class SceneLibraryStore {
         next.version = Self.catalogVersion
         try validateCatalog(next)
         let data = try JSONEncoder().encode(next)
-        guard data.count <= Self.maxIndexBytes else { throw failure("The Library index is full.") }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: file, options: .atomic)
         catalog = next

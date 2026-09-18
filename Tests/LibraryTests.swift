@@ -57,7 +57,11 @@ import Foundation
         precondition(duplicate == entry)
         precondition(entry.bookmark != nil && entry.sourceID == nil)
         try store.favorite(entry.id)
+        let entriesBeforeUse = store.catalog.entries
         try store.used(entry.id)
+        precondition(store.catalog.entries == entriesBeforeUse, "Using a wallpaper must preserve All Wallpapers")
+        let afterUse = try SceneLibraryStore(file: file)
+        precondition(afterUse.catalog.entries == entriesBeforeUse, "Using must preserve persisted library entries")
         let collection = try store.createCollection(name: " Chill ")
         try store.toggleMembership(sceneID: entry.id, collectionID: collection.id)
         try store.toggleMembership(sceneID: "builtin.Undertow", collectionID: collection.id)
@@ -262,8 +266,13 @@ import Foundation
         // Source removal deletes Library references only and preserves unrelated state and source media.
         let sourceFileBytes = try Data(contentsOf: sourceMediaB)
         let sourceIDs = Set(mixed.catalog.entries.filter { $0.sourceID == source.id }.map(\.id))
+        let pendingAccess = mixed.accessRequest(sourceEntry)
         try mixed.removeSource(source.id)
         precondition(mixed.catalog.sources.isEmpty)
+        let capturedAccess = try pendingAccess.open()
+        precondition(capturedAccess.url.standardizedFileURL == sourceMediaB.standardizedFileURL,
+                     "Queued access must use its captured source reference rather than a mutated catalog")
+        capturedAccess.close()
         precondition(mixed.catalog.entries.map(\.id) == [legacyID])
         precondition(mixed.catalog.favorites == [legacyID])
         precondition(mixed.catalog.recent[legacyID] != nil)
@@ -277,16 +286,17 @@ import Foundation
         precondition(mixed.catalog.recent.count == 256)
         precondition(mixed.catalog.recent["recent-299"] != nil)
 
-        // Preserve the individual-entry bound while moving large catalogs to their own bound.
+        // Catalogs larger than the former product caps must load and persist.
         let tooManyIndividualsFile = folder.appendingPathComponent("Limits/individuals.json")
         try FileManager.default.createDirectory(at: tooManyIndividualsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         let oneBookmark = try bookmark(legacyMedia)
-        let tooManyIndividuals = LegacyCatalog(entries: (0...SceneLibraryStore.maxIndividualEntries).map {
+        let tooManyIndividuals = LegacyCatalog(entries: (0...4096).map {
             LegacyEntry(id: "legacy-\($0)", title: "Wallpaper \($0)", bookmark: oneBookmark)
         }, favorites: [], recent: [:], collections: [])
         let tooManyIndividualBytes = try JSONEncoder().encode(tooManyIndividuals)
         try tooManyIndividualBytes.write(to: tooManyIndividualsFile)
-        expectFailure("Legacy individual-entry limit weakened") { _ = try SceneLibraryStore(file: tooManyIndividualsFile) }
+        let largeIndividuals = try SceneLibraryStore(file: tooManyIndividualsFile)
+        precondition(largeIndividuals.catalog.entries.count == 4097)
         try assertContents(tooManyIndividualsFile, equal: tooManyIndividualBytes)
 
         let sourceLimitFile = folder.appendingPathComponent("Limits/source-entries.json")
@@ -294,23 +304,35 @@ import Foundation
         let sourceLimitRoot = folder.appendingPathComponent("Limit Source", isDirectory: true)
         try FileManager.default.createDirectory(at: sourceLimitRoot, withIntermediateDirectories: true)
         let sourceLimit = try sourceLimitStore.addSource(sourceLimitRoot)
-        let beforeSourceLimit = try Data(contentsOf: sourceLimitFile)
-        let tooManySourceEntries = (0...SceneLibraryStore.maxSourceEntries).map {
+        let tooManySourceEntries = (0...4096).map {
             SceneLibraryStore.SourceEntry(relativeMediaPath: "entry-\($0).png")
         }
-        expectFailure("Source-entry limit weakened") { _ = try sourceLimitStore.addSourceEntries(sourceLimit.id, tooManySourceEntries) }
-        try assertContents(sourceLimitFile, equal: beforeSourceLimit)
+        _ = try sourceLimitStore.addSourceEntries(sourceLimit.id, tooManySourceEntries)
+        let reloadedSource = try SceneLibraryStore(file: sourceLimitFile)
+        precondition(reloadedSource.catalog.entries.count == 4097)
 
         let sourceCountFile = folder.appendingPathComponent("Limits/sources.json")
         let rootBookmark = try bookmark(sourceLimitRoot)
         var sourceCountCatalog = SceneLibraryStore.Catalog()
-        sourceCountCatalog.sources = (0...SceneLibraryStore.maxSources).map {
+        sourceCountCatalog.sources = (0...32).map {
             SceneLibraryStore.SourceRoot(id: "source-\($0)", name: "Source \($0)", bookmark: rootBookmark)
         }
         let sourceCountBytes = try JSONEncoder().encode(sourceCountCatalog)
         try sourceCountBytes.write(to: sourceCountFile)
-        expectFailure("Source-root limit weakened") { _ = try SceneLibraryStore(file: sourceCountFile) }
+        let largeSources = try SceneLibraryStore(file: sourceCountFile)
+        precondition(largeSources.catalog.sources.count == 33)
         try assertContents(sourceCountFile, equal: sourceCountBytes)
+
+        var expanded = reloadedSource.catalog
+        expanded.favorites = Set(expanded.entries.prefix(300).map(\.id))
+        expanded.collections = (0..<33).map {
+            SceneLibraryStore.Collection(name: "Collection \($0)", sceneIDs: Array(expanded.entries.prefix(300).map(\.id)))
+        }
+        try reloadedSource.commitCatalog(expanded)
+        let expandedReload = try SceneLibraryStore(file: sourceLimitFile)
+        precondition(expandedReload.catalog.favorites.count == 300)
+        precondition(expandedReload.catalog.collections.count == 33)
+        precondition(expandedReload.catalog.collections.first?.sceneIDs.count == 300)
 
         // Semantically corrupt v2 paths fail closed and stay byte-for-byte preserved.
         let semanticFile = folder.appendingPathComponent("Limits/semantic.json")
@@ -337,10 +359,10 @@ import Foundation
         expectFailure("Future Library version accepted") { _ = try SceneLibraryStore(file: corruptFile) }
         try assertContents(corruptFile, equal: futureBytes)
 
-        try Data(repeating: 0, count: SceneLibraryStore.maxIndexBytes + 1).write(to: corruptFile)
-        expectFailure("Oversized index accepted") { _ = try SceneLibraryStore(file: corruptFile) }
+        try Data(repeating: 0, count: 16_777_216 + 1).write(to: corruptFile)
+        expectFailure("Malformed index accepted") { _ = try SceneLibraryStore(file: corruptFile) }
         let oversizedSize = (try FileManager.default.attributesOfItem(atPath: corruptFile.path)[.size] as? NSNumber)?.intValue
-        precondition(oversizedSize == SceneLibraryStore.maxIndexBytes + 1)
+        precondition(oversizedSize == 16_777_216 + 1)
 
         print("Library checks passed: v1 migration, mixed bookmarks/sources, relink, path containment, metadata, state preservation, bounds, and corrupt-index preservation")
     }

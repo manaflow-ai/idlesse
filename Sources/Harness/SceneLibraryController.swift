@@ -26,27 +26,179 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let mediaFilter = LibraryFilterButton()
     private let importButton = LibraryHoverButton(title: "Add Wallpapers…", target: nil, action: nil)
 
-    /// Home owns the toolbar, while Library retains the search query and import actions.
+    private var browsingToolbar: NSView?
+    private var browsingTop: NSLayoutConstraint?
+    private var searchIsEditing = false
+    private var compactSearchWidth: NSLayoutConstraint?
+    private let compactSort = LibraryHoverButton(title: "", target: nil, action: nil)
+
+    /// One browsing group in the window toolbar, alongside the wallpaper player.
     func makeSearchToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        if let stack = search.superview as? NSStackView { stack.removeArrangedSubview(search); stack.isHidden = true }
-        search.removeFromSuperview()
+        browsingToolbar?.isHidden = true
+        browsingTop?.isActive = false
+        if let toolbar = browsingToolbar {
+            browsingTop = browserSplit.view.topAnchor.constraint(equalTo: toolbar.topAnchor)
+            browsingTop?.isActive = true
+        }
+        let controls: [NSView] = [search, refinementButton, compactSort, libraryActions]
+        for control in controls {
+            if let stack = control.superview as? NSStackView { stack.removeArrangedSubview(control) }
+            control.removeFromSuperview()
+        }
+        refinementButton.image = NekoIcons.image("filter")
+        refinementButton.title = ""
+        refinementButton.imagePosition = .imageOnly
+        refinementButton.setAccessibilityLabel("Filter wallpapers")
+        compactSort.image = NekoIcons.image("sort")
+        compactSort.imagePosition = .imageOnly
+        compactSort.isBordered = false
+        compactSort.target = self
+        compactSort.action = #selector(showCompactSort)
+        compactSort.setAccessibilityLabel("Sort wallpapers")
+        libraryActions.item(at: 0)?.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Organize library")
+        (libraryActions.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        inspectorButton.bezelStyle = .rounded
+        inspectorButton.isBordered = false
+        libraryActions.imagePosition = .imageOnly
+        for button in [refinementButton, compactSort] {
+            button.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        }
+        libraryActions.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        libraryActions.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        libraryActions.imageScaling = .scaleProportionallyDown
+        for button in [refinementButton, compactSort] {
+            button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+            button.contentTintColor = .labelColor
+        }
+        search.font = .systemFont(ofSize: 15, weight: .medium)
+        (search.cell as? NSSearchFieldCell)?.resetSearchButtonCell()
+        search.placeholderString = "Search"
+        compactSearchWidth = search.widthAnchor.constraint(equalToConstant: 240)
+        compactSearchWidth?.isActive = true
+        search.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        let host = NSStackView(views: controls)
+        host.spacing = 6
+        host.alignment = .centerY
         let item = NSToolbarItem(itemIdentifier: identifier)
-        let host = NSView()
-        host.translatesAutoresizingMaskIntoConstraints = false
-        search.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(search)
-        NSLayoutConstraint.activate([
-            host.widthAnchor.constraint(equalToConstant: 300),
-            host.heightAnchor.constraint(equalToConstant: 28),
-            search.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            search.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            search.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-            search.heightAnchor.constraint(equalToConstant: 28),
-        ])
         item.view = host
-        item.label = "Search Wallpapers"
-        item.toolTip = "Search the current Library selection"
+        item.isBordered = false
+        item.label = "Browse wallpapers"
         return item
+    }
+
+    func makeViewToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        for control in [viewModeControl, inspectorButton] as [NSView] {
+            if let stack = control.superview as? NSStackView { stack.removeArrangedSubview(control) }
+            control.removeFromSuperview()
+        }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        layoutToggle.target = self
+        layoutToggle.action = #selector(toggleLayout)
+        layoutToggle.isBordered = false
+        layoutToggle.widthAnchor.constraint(equalToConstant: 84).isActive = true
+        layoutToggle.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        updateLayoutToggle()
+        let group = LibraryAlignedLayoutControl(control: layoutToggle) { [weak self] in
+            guard let self, self.gridScroll.window != nil, self.inspectorItem?.isCollapsed == false else { return nil }
+            return self.gridView.thumbnailTrailingEdgeInWindow
+        }
+        alignedLayoutControl = group
+        item.view = group
+        item.isBordered = false
+        item.label = "Library layout"
+        return item
+    }
+    func makeInspectorToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        if let stack = inspectorButton.superview as? NSStackView { stack.removeArrangedSubview(inspectorButton) }
+        inspectorButton.removeFromSuperview()
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        inspectorButton.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        inspectorButton.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        item.view = inspectorButton
+        item.isBordered = false
+        item.label = "Inspector"
+        return item
+    }
+
+    private func updateLayoutToggle() {
+        let isGrid = viewModeControl.selectedSegment == 1
+        let label = isGrid ? "Switch to list view" : "Switch to grid view"
+        layoutToggle.isGrid = isGrid
+        layoutToggle.setAccessibilityLabel(label)
+        layoutToggle.toolTip = label
+    }
+
+    @objc private func toggleLayout() {
+        viewModeControl.selectedSegment = viewModeControl.selectedSegment == 1 ? 0 : 1
+        viewModeChanged()
+    }
+
+    func makeInspectorDivider(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: browserSplit.splitView, dividerIndex: 0)
+    }
+    private var lastExpandedInspectorWidth: CGFloat = 380
+    private var playbackWidth: NSLayoutConstraint?
+    private var alignedLayoutControl: NSView?
+    private let inspectorBoundary = NSView()
+    private let inspectorHeaderSurface = NSView()
+    private func updateInspectorBoundary() {
+        guard let pane = inspectorItem, let root = presentationWindow?.contentView else { return }
+        for surface in [inspectorHeaderSurface, inspectorBoundary] where surface.superview !== root {
+            surface.removeFromSuperview()
+            surface.wantsLayer = true
+            root.addSubview(surface, positioned: .above, relativeTo: nil)
+        }
+        let frame = root.convert(pane.viewController.view.bounds, from: pane.viewController.view)
+        inspectorBoundary.isHidden = true
+        inspectorHeaderSurface.isHidden = pane.isCollapsed
+        inspectorBoundary.layer?.backgroundColor = NSColor(calibratedRed: 0.38, green: 0.35, blue: 0.43, alpha: 0.65).cgColor
+        inspectorBoundary.frame = NSRect(x: frame.minX - 1, y: root.bounds.minY,
+                                         width: 1, height: root.bounds.height)
+        inspectorHeaderSurface.layer?.backgroundColor = LibrarySurfaceColors.sidebar.cgColor
+        inspectorHeaderSurface.frame = NSRect(x: frame.minX, y: frame.maxY,
+                                              width: frame.width, height: max(0, root.bounds.maxY - frame.maxY))
+    }
+    func alignPlaybackWidth(_ constraint: NSLayoutConstraint) {
+        playbackWidth = constraint
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePlaybackWidth),
+            name: NSSplitView.didResizeSubviewsNotification, object: browserSplit.splitView)
+        DispatchQueue.main.async { [weak self] in self?.updatePlaybackWidth() }
+    }
+    @objc private func updatePlaybackWidth() {
+        guard let pane = inspectorItem else { return }
+        let inspectorWidth = pane.viewController.view.bounds.width
+        if !pane.isCollapsed && inspectorWidth >= 300 { lastExpandedInspectorWidth = inspectorWidth }
+        let desiredPlaybackWidth = max(236, lastExpandedInspectorWidth - 64)
+        if playbackWidth?.constant != desiredPlaybackWidth { playbackWidth?.constant = desiredPlaybackWidth }
+        updateSearchWidth()
+        updateInspectorBoundary()
+        alignedLayoutControl?.needsLayout = true
+    }
+
+    private func updateSearchWidth() {
+        search.layer?.borderWidth = searchIsEditing ? 1.5 : 0.5
+        search.layer?.borderColor = NekoIcons.accent.withAlphaComponent(searchIsEditing ? 1 : 0.45).cgColor
+        let browsingWidth = browserSplit.splitView.subviews.first?.bounds.width ?? 420
+        let available = max(220, min(280, browsingWidth - 250))
+        compactSearchWidth?.constant = min(available, searchIsEditing || !search.stringValue.isEmpty ? 280 : 240)
+    }
+    func controlTextDidBeginEditing(_ obj: Notification) { searchIsEditing = true; updateSearchWidth() }
+    func controlTextDidEndEditing(_ obj: Notification) { searchIsEditing = false; updateSearchWidth() }
+
+    @objc private func showCompactSort() {
+        let menu = NSMenu()
+        for (index, title) in sort.itemTitles.enumerated() {
+            let item = NSMenuItem(title: title, action: #selector(selectCompactSort(_:)), keyEquivalent: "")
+            item.target = self; item.tag = index
+            item.state = sort.indexOfSelectedItem == index ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: compactSort.isFlipped ? compactSort.bounds.maxY + 6 : compactSort.bounds.minY - 6), in: compactSort)
+    }
+    @objc private func selectCompactSort(_ sender: NSMenuItem) {
+        sort.selectItem(at: sender.tag)
+        filterChanged()
     }
 
     func makeImportToolbarItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
@@ -98,13 +250,16 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         reload(selecting: changed ? selectionByScope[scope] : nil)
     }
     private let inspectorButton = LibraryHoverButton(frame: .zero)
-    private let libraryActions = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let libraryActions = LibraryOrganizeMenu(frame: .zero, pullsDown: true)
     private let browserSplit = NSSplitViewController()
     private var inspectorItem: NSSplitViewItem?
     private let store: SceneLibraryStore
     private let table = NSTableView()
     private let search: NSSearchField = {
         let field = NSSearchField()
+        field.focusRingType = .none
+        field.wantsLayer = true
+        field.layer?.cornerRadius = 9
         field.cell = CenteredLibrarySearchCell(textCell: "")
         field.isEditable = true
         field.isSelectable = true
@@ -121,6 +276,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var favoriteOnly = false
     private var unopenedOnly = false
     private var sourceFilterID: String?
+    private let layoutToggle = LibraryLayoutSwitch(frame: .zero)
     private let viewModeControl = NSSegmentedControl(labels: ["List", "Grid"], trackingMode: .selectOne, target: nil, action: nil)
     private let collectionActions = NSPopUpButton(frame: .zero, pullsDown: true)
     private let sourceActions = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -133,12 +289,20 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }()
     private let thumbnails = NSCache<NSString, NSImage>()
     private var pendingThumbnails: [String: [(NSImage) -> Void]] = [:]
+    private var queuedThumbnails: [String: (itemID: String, operation: BlockOperation)] = [:]
+    private var visibleThumbnailIDs: Set<String> = []
+    private func prioritizeThumbnails(_ ids: Set<String>) {
+        visibleThumbnailIDs = ids
+        for job in queuedThumbnails.values {
+            job.operation.queuePriority = ids.isEmpty ? .normal : (ids.contains(job.itemID) ? .veryHigh : .low)
+        }
+    }
     private var resolvedMediaURLs: [String: URL] = [:]
     private var thumbnailRevisions: [String: UInt] = [:]
     private var thumbnailJobsStarted = 0
     private let scroll = NSScrollView()
     private let right = NSStackView()
-    private let gridScroll = NSScrollView()
+    private let gridScroll = LibraryGalleryScrollView()
     private let gridView = LibraryGridView()
     private let poster = LibraryDraggablePreview()
     private let previewStage = NSView()
@@ -146,9 +310,27 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private var dragAccess: OpenedItem?
     func installDisplayCanvas(wallpaper: WallpaperController) {
         guard displayCanvas == nil else { return }
+        gridView.onPlaybackAction = { [weak self, weak wallpaper] item in
+            guard let self, let wallpaper else { return }
+            self.selected = item
+            self.gridView.select(id: item.id)
+            if let index = self.items.firstIndex(where: { $0.id == item.id }) {
+                self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            }
+            self.preview()
+            if let url = try? self.open(item).url.standardizedFileURL,
+               wallpaper.selectedURL?.standardizedFileURL == url, wallpaper.canPausePlayback {
+                wallpaper.togglePause()
+            } else {
+                self.selected = item
+                self.useScene()
+            }
+            self.updatePlaybackState(wallpaper)
+        }
         let canvas = DisplayAssignmentViewController(wallpaper: wallpaper, compact: true)
         canvas.requestArtwork = { [weak self] url, done in self?.requestPlaybackArtwork(url, completion: done) }
         displayCanvas = canvas
+        canvas.onLibraryTargetChange = { [weak self] in self?.updateApplyState() }
         right.addArrangedSubview(canvas.view)
         canvas.view.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
         canvas.activate()
@@ -168,6 +350,12 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     private let taskStatusRow = NSStackView()
     private var browserBottom: NSLayoutConstraint?
     private let desktopStatus = NSTextField(labelWithString: "✓ On Desktop")
+    func updatePlaybackState(_ wallpaper: WallpaperController) {
+        let ids = wallpaper.pausedByUser ? Set<String>() : Set(resolvedMediaURLs.compactMap {
+            $0.value.standardizedFileURL == wallpaper.selectedURL?.standardizedFileURL ? $0.key : nil
+        })
+        if gridView.playingIDs != ids { gridView.playingIDs = ids }
+    }
     private var playingURL: URL?
     func updatePlayingURL(_ url: URL?) {
         let next = url?.standardizedFileURL
@@ -177,7 +365,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
     private func updateApplyState() {
         let isPlaying: Bool
-        if let selected, let playingURL {
+        if let selected, let canvas = displayCanvas, let url = try? open(selected).url {
+            isPlaying = canvas.libraryTargetContains(url)
+        } else if let selected, let playingURL {
             isPlaying = (try? open(selected).url.standardizedFileURL) == playingURL
         } else { isPlaying = false }
         apply.title = isPlaying ? "✓ On Desktop" : "Set Wallpaper"
@@ -343,7 +533,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         root.wantsLayer = true
         root.layer?.backgroundColor = LibrarySurfaceColors.content.cgColor
         // Keep a typical personal library resident while retaining a byte ceiling.
-        // 130 decoded 320×180 posters occupy about 29 MiB.
+        // Bound decoded artwork memory independently of catalog size.
         readyThumbnails.totalCostLimit = 96 * 1024 * 1024
         thumbnails.countLimit = 256
         thumbnails.totalCostLimit = 96 * 1024 * 1024
@@ -420,12 +610,14 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         refinementButton.action = #selector(showRefinements)
         let browsingRow = NSStackView(views: [filter, mediaFilter, refinementButton, sort, viewModeControl, inspectorButton, libraryActions, spacer, importButton])
         browsingRow.spacing = 10
-        let toolbar = NSStackView(views: homeNavigation ? [browsingRow] : [searchRow, browsingRow])
+        let toolbar = NSStackView(views: homeNavigation ? [] : [searchRow, browsingRow])
+        if homeNavigation { toolbar.heightAnchor.constraint(equalToConstant: 0).isActive = true }
+        browsingToolbar = toolbar
         toolbar.orientation = .vertical
         toolbar.alignment = .leading
         toolbar.spacing = 6
         if !homeNavigation { searchRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true }
-        browsingRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true
+        if !homeNavigation { browsingRow.widthAnchor.constraint(equalTo: toolbar.widthAnchor).isActive = true }
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Scene"))
         column.width = 280
         column.resizingMask = .autoresizingMask
@@ -433,7 +625,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         table.addTableColumn(column)
         table.headerView = nil
         table.rowHeight = 58
-        table.style = .sourceList
+        table.style = .fullWidth
+        table.backgroundColor = LibrarySurfaceColors.content
+        scroll.drawsBackground = false
         table.delegate = self; table.dataSource = self
         table.target = self; table.doubleAction = #selector(doubleClickScene)
         table.setAccessibilityLabel("Scenes")
@@ -441,11 +635,16 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         gridScroll.documentView = gridView
-        gridScroll.hasVerticalScroller = true
+        gridScroll.hasVerticalScroller = false
+        gridScroll.scrollerStyle = .overlay
+        scroll.scrollerStyle = .overlay
+        scroll.autohidesScrollers = true
         gridScroll.hasHorizontalScroller = false
         gridScroll.autohidesScrollers = true
         gridScroll.drawsBackground = false
         gridView.autoresizingMask = [.width]
+        gridView.onVisibleItemsChange = { [weak self] in self?.prioritizeThumbnails($0) }
+        gridView.onGeometryChange = { [weak self] in self?.alignedLayoutControl?.needsLayout = true }
         gridView.onSelect = { [weak self] item in
             guard let self, self.selected?.id != item.id else { return }
             self.selected = item
@@ -469,6 +668,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 entry.target = self
                 if action == #selector(useScene) { entry.isEnabled = self.apply.isEnabled }
                 if action == #selector(frameScene) { entry.isEnabled = self.canAdjustSelection }
+            }
+            if item.entry != nil {
+                menu.addItem(.separator())
+                let removal = menu.addItem(withTitle: "Remove from Library", action: #selector(removeScene), keyEquivalent: "")
+                removal.target = self
             }
             return menu
         }
@@ -494,7 +698,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         poster.imageScaling = .scaleProportionallyUpOrDown
         poster.wantsLayer = true
         poster.layer?.backgroundColor = NSColor.black.cgColor
-        poster.layer?.cornerRadius = 0
+        poster.layer?.cornerRadius = 8
+        poster.layer?.masksToBounds = true
         titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
         detail.textColor = .secondaryLabelColor
         favorite.target = self; favorite.action = #selector(toggleFavorite)
@@ -507,12 +712,29 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         clearSearchButton.bezelStyle = .rounded
         clearSearchButton.isHidden = true
         remove.target = self; remove.action = #selector(removeScene)
-        more.addItems(withTitles: ["More…", "Refresh Preview", "Make a Copy in Studio", "Remove from Library", "Adjust Framing…"])
+        more.addItems(withTitles: ["More", "Refresh Preview", "Remove from Library"])
         more.menu?.autoenablesItems = false
         more.target = self; more.action = #selector(moreAction)
         favorite.isBordered = false; favorite.setAccessibilityLabel("Favorite wallpaper")
-        let heading = NSStackView(views: [titleLabel, NSView(), favorite])
+        favorite.font = .systemFont(ofSize: 23, weight: .medium)
+        favorite.iconSize = 25
+        favorite.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        favorite.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        let refresh = LibraryHoverButton(title: "", target: self, action: #selector(refreshPreview))
+        refresh.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh Preview")
+        refresh.imagePosition = .imageOnly
+        refresh.iconSize = 25
+        refresh.iconTint = NekoIcons.ivory
+        refresh.isBordered = false
+        refresh.contentTintColor = .labelColor
+        refresh.setAccessibilityLabel("Refresh Preview")
+        refresh.toolTip = "Refresh Preview"
+        refresh.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        refresh.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        let heading = NSStackView(views: [titleLabel, NSView(), refresh, favorite])
         heading.orientation = .horizontal
+        heading.alignment = .centerY
+        livePreviewButton.cell = LibraryPreviewActionCell(textCell: "Play Preview")
         livePreviewButton.target = self
         livePreviewButton.action = #selector(toggleLivePreview)
         livePreviewButton.bezelStyle = .rounded
@@ -523,16 +745,20 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         livePreviewButton.isBordered = false
         livePreviewButton.image = NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "Preview")
         livePreviewButton.imagePosition = .imageLeading
-        let playbackActions = NSStackView(views: [livePreviewButton, NSView(), desktopStatus, apply])
-        playbackActions.spacing = 8
+        livePreviewButton.alignment = .center
+        livePreviewButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        livePreviewButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        adjust.title = "Adjust"
         adjust.isBordered = false
         adjust.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
         adjust.imagePosition = .imageLeading
+        edit.title = "Studio"
+        edit.setAccessibilityLabel("Edit in Studio")
         edit.isBordered = false
         edit.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
         edit.imagePosition = .imageLeading
         more.isBordered = false
-        let editingActions = NSStackView(views: [adjust, NSView(), edit, more])
+        let editingActions = NSStackView(views: [adjust, edit, NSView()])
         editingActions.spacing = 12
         let primary = NSStackView(views: [editingActions, clearSearchButton])
         primary.spacing = 12
@@ -540,36 +766,73 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         apply.isBordered = false
         apply.wantsLayer = true
         apply.layer?.cornerRadius = 7
-        apply.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        apply.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.09).cgColor
         apply.widthAnchor.constraint(equalToConstant: 128).isActive = true
         apply.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        apply.contentTintColor = .white
+        apply.contentTintColor = .labelColor
+        livePreviewButton.contentTintColor = .labelColor
+        adjust.contentTintColor = .labelColor
+        edit.contentTintColor = .labelColor
         detail.font = .systemFont(ofSize: 12)
-        let glassControls = NSVisualEffectView()
-        glassControls.material = .hudWindow
-        glassControls.blendingMode = .withinWindow
-        glassControls.state = .active
-        glassControls.wantsLayer = true
-        glassControls.layer?.cornerRadius = 8
-        glassControls.layer?.masksToBounds = true
+        // Each action has its own frosted surface outside the artwork.
+        var previewSurfaces: [LibraryPreviewGlass] = []
+        func frostedControl(_ button: NSButton) -> NSView {
+            let surface = LibraryPreviewGlass()
+            previewSurfaces.append(surface)
+            surface.material = .hudWindow
+            surface.blendingMode = .withinWindow
+            surface.state = .active
+            surface.wantsLayer = true
+            surface.layer?.cornerRadius = 8
+            surface.layer?.masksToBounds = true
+            surface.addSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+                button.topAnchor.constraint(equalTo: surface.topAnchor),
+                button.bottomAnchor.constraint(equalTo: surface.bottomAnchor),
+            ])
+            return surface
+        }
+        livePreviewButton.widthAnchor.constraint(equalToConstant: 128).isActive = true
+        apply.layer?.backgroundColor = NSColor.clear.cgColor
+        let playbackActions = NSStackView(views: [frostedControl(livePreviewButton), NSView(), frostedControl(apply)])
+        playbackActions.spacing = 8
+        previewStage.wantsLayer = true
+        previewStage.layer?.cornerRadius = 8
+        previewStage.layer?.masksToBounds = true
         previewStage.addSubview(poster)
-        previewStage.addSubview(glassControls)
-        glassControls.addSubview(playbackActions)
-        for view in [poster, glassControls, playbackActions] { view.translatesAutoresizingMaskIntoConstraints = false }
+        let previewEdge = LibrarySelectionEdge()
+        previewEdge.tint = NekoIcons.accent
+        previewEdge.translatesAutoresizingMaskIntoConstraints = false
+        previewStage.addSubview(previewEdge)
+        NSLayoutConstraint.activate([
+            previewEdge.leadingAnchor.constraint(equalTo: previewStage.leadingAnchor),
+            previewEdge.trailingAnchor.constraint(equalTo: previewStage.trailingAnchor),
+            previewEdge.topAnchor.constraint(equalTo: previewStage.topAnchor),
+            previewEdge.bottomAnchor.constraint(equalTo: previewStage.bottomAnchor),
+        ])
+        poster.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             poster.leadingAnchor.constraint(equalTo: previewStage.leadingAnchor),
             poster.trailingAnchor.constraint(equalTo: previewStage.trailingAnchor),
             poster.topAnchor.constraint(equalTo: previewStage.topAnchor),
             poster.bottomAnchor.constraint(equalTo: previewStage.bottomAnchor),
-            glassControls.leadingAnchor.constraint(equalTo: previewStage.leadingAnchor, constant: 8),
-            glassControls.trailingAnchor.constraint(equalTo: previewStage.trailingAnchor, constant: -8),
-            glassControls.bottomAnchor.constraint(equalTo: previewStage.bottomAnchor, constant: -8),
-            playbackActions.leadingAnchor.constraint(equalTo: glassControls.leadingAnchor, constant: 8),
-            playbackActions.trailingAnchor.constraint(equalTo: glassControls.trailingAnchor, constant: -8),
-            playbackActions.topAnchor.constraint(equalTo: glassControls.topAnchor, constant: 5),
-            playbackActions.bottomAnchor.constraint(equalTo: glassControls.bottomAnchor, constant: -5),
         ])
-        right.setViews([previewStage, heading, detail, primary], in: .leading)
+        let identity = NSStackView(views: [heading, detail])
+        identity.orientation = .vertical
+        identity.alignment = .leading
+        identity.spacing = 3
+        let actions = NSStackView(views: [playbackActions, primary])
+        actions.orientation = .vertical
+        actions.alignment = .leading
+        actions.spacing = 8
+        right.setViews([previewStage, identity, actions], in: .leading)
+        identity.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
+        heading.widthAnchor.constraint(equalTo: identity.widthAnchor).isActive = true
+        actions.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
+        playbackActions.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
         right.orientation = .vertical
         right.alignment = .leading
         right.spacing = 12
@@ -581,14 +844,35 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         browserItem.minimumThickness = 420
         let inspectorController = NSViewController()
         let inspector = NSView()
+        inspector.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePlaybackWidth),
+            name: NSView.frameDidChangeNotification, object: inspector)
         inspector.wantsLayer = true
-        inspector.layer?.backgroundColor = LibrarySurfaceColors.content.cgColor
+        inspector.layer?.backgroundColor = LibrarySurfaceColors.sidebar.cgColor
+        let reflectedLight = LibraryPreviewLight()
+        reflectedLight.translatesAutoresizingMaskIntoConstraints = false
+        reflectedLight.isHidden = true
+        inspector.addSubview(reflectedLight)
+        NSLayoutConstraint.activate([
+            reflectedLight.leadingAnchor.constraint(equalTo: inspector.leadingAnchor),
+            reflectedLight.trailingAnchor.constraint(equalTo: inspector.trailingAnchor),
+            reflectedLight.topAnchor.constraint(equalTo: inspector.topAnchor),
+            reflectedLight.bottomAnchor.constraint(equalTo: inspector.bottomAnchor),
+        ])
+        poster.onImageChange = { image in
+            let colors = LibraryPreviewGlass.palette(image)
+            for (index, surface) in previewSurfaces.enumerated() {
+                surface.tint(colors, reversed: index == 1)
+            }
+            reflectedLight.tint(colors)
+        }
         inspectorController.view = inspector
         let pane = NSSplitViewItem(viewController: inspectorController)
         pane.minimumThickness = 300
         pane.maximumThickness = 380
         pane.preferredThicknessFraction = 0.32
         pane.canCollapse = true
+        pane.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         inspectorItem = pane
         browserSplit.addSplitViewItem(browserItem)
         browserSplit.addSplitViewItem(pane)
@@ -626,21 +910,22 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         primary.alignment = .leading
         browserBottom = browserSplit.view.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         browserBottom?.isActive = true
+        browsingTop = browserSplit.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: homeNavigation ? 0 : 12)
+        browsingTop?.isActive = true
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 2),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             search.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-            browserSplit.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 12),
             browserSplit.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             browserSplit.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             taskStatusRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             taskStatusRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             taskStatusRow.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -6),
             right.topAnchor.constraint(equalTo: inspector.topAnchor, constant: 12),
-            right.leadingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: 16),
-            right.trailingAnchor.constraint(equalTo: inspector.trailingAnchor, constant: -16),
-            right.bottomAnchor.constraint(lessThanOrEqualTo: inspector.bottomAnchor, constant: -12),
+            right.leadingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: 12),
+            right.trailingAnchor.constraint(equalTo: inspector.trailingAnchor, constant: -12),
+            right.bottomAnchor.constraint(lessThanOrEqualTo: inspector.bottomAnchor, constant: -16),
             previewStage.widthAnchor.constraint(equalTo: right.widthAnchor),
             poster.heightAnchor.constraint(equalTo: poster.widthAnchor, multiplier: 9.0 / 16.0),
             heading.widthAnchor.constraint(equalTo: right.widthAnchor),
@@ -653,7 +938,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
 
     @objc private func viewModeChanged() {
+        updateLayoutToggle()
         let isGrid = viewModeControl.selectedSegment == 1
+        if viewModeControl.selectedSegment == 0 { prioritizeThumbnails([]) }
         UserDefaults.standard.set(viewModeControl.selectedSegment, forKey: "Idlesse.library.viewMode")
         scroll.isHidden = isGrid
         gridScroll.isHidden = !isGrid
@@ -669,8 +956,25 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
 
     @objc private func toggleInspector() {
         let visible = inspectorButton.state == .on
+        let originalWindowFrame = presentationWindow?.frame
         inspectorButton.toolTip = visible ? "Hide Inspector" : "Show Inspector"
+        if !visible, let pane = inspectorItem {
+            lastExpandedInspectorWidth = max(300, pane.viewController.view.bounds.width)
+        }
+        presentationWindow?.disableScreenUpdatesUntilFlush()
         inspectorItem?.isCollapsed = !visible
+        if visible {
+            let split = browserSplit.splitView
+            let width = min(380, max(300, lastExpandedInspectorWidth))
+            playbackWidth?.constant = width - 64
+            if let originalWindowFrame {
+                presentationWindow?.setFrame(originalWindowFrame, display: false)
+                presentationWindow?.contentView?.layoutSubtreeIfNeeded()
+            }
+            split.setPosition(split.bounds.width - width - split.dividerThickness, ofDividerAt: 0)
+            updatePlaybackWidth()
+        }
+        updateInspectorBoundary()
         if !visible { stopLivePreview() }
         UserDefaults.standard.set(visible, forKey: "Idlesse.library.inspectorVisible")
     }
@@ -721,6 +1025,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             item.representedObject = source
             return item
         }
+        for (index, title) in mediaFilter.itemTitles.enumerated() {
+            menu.addItem(option(title, 10 + index, mediaFilter.indexOfSelectedItem == index))
+        }
+        menu.addItem(.separator())
         menu.addItem(option("Favorites only", 1, favoriteOnly))
         menu.addItem(option("Never opened", 2, unopenedOnly))
         menu.addItem(.separator())
@@ -735,10 +1043,11 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         sourceItem.submenu = sources; menu.addItem(sourceItem)
         menu.addItem(.separator())
         menu.addItem(option("Reset filters", 4, false))
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: refinementButton.bounds.minY), in: refinementButton)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: refinementButton.isFlipped ? refinementButton.bounds.maxY + 6 : refinementButton.bounds.minY - 6), in: refinementButton)
     }
     @objc private func refineLibrary(_ sender: NSMenuItem) {
         switch sender.tag {
+        case 10...13: mediaFilter.selectItem(at: sender.tag - 10)
         case 1: favoriteOnly.toggle()
         case 2: unopenedOnly.toggle()
         case 3: sourceFilterID = sender.representedObject as? String
@@ -863,8 +1172,24 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         let collectionPositions: [String: Int] = (activeCollection?.sceneIDs ?? []).enumerated().reduce(into: [:]) { positions, entry in
             if positions[entry.element] == nil { positions[entry.element] = entry.offset }
         }
-        let refinementCount = (favoriteOnly ? 1 : 0) + (unopenedOnly ? 1 : 0) + (sourceFilterID == nil ? 0 : 1)
-        refinementButton.title = refinementCount == 0 ? "Filters" : "Filters · \(refinementCount)"
+        let refinementCount = (favoriteOnly ? 1 : 0) + (unopenedOnly ? 1 : 0)
+            + (sourceFilterID == nil ? 0 : 1) + (mediaFilter.indexOfSelectedItem > 0 ? 1 : 0)
+        var activeFilters: [String] = []
+        if mediaFilter.indexOfSelectedItem > 0 { activeFilters.append(mediaFilter.titleOfSelectedItem ?? "Media type") }
+        if favoriteOnly { activeFilters.append("Favorites") }
+        if unopenedOnly { activeFilters.append("Never opened") }
+        if sourceFilterID != nil { activeFilters.append("Source") }
+        let filterDescription = activeFilters.isEmpty ? "Filter wallpapers" : "Filters: " + activeFilters.joined(separator: ", ")
+        refinementButton.setAccessibilityLabel(filterDescription)
+        refinementButton.toolTip = filterDescription
+        compactSort.toolTip = "Sort: " + (sort.titleOfSelectedItem ?? "Name A–Z")
+        compactSort.setAccessibilityLabel(compactSort.toolTip)
+        updateSearchWidth()
+        refinementButton.title = compactSearchWidth == nil ? (refinementCount == 0 ? "Filters" : "Filters · \(refinementCount)") : ""
+        if compactSearchWidth != nil {
+            refinementButton.image = NekoIcons.image("filter")
+            refinementButton.imagePosition = .imageOnly
+        }
         let needsMediaType = homeNavigation ? mediaFilter.indexOfSelectedItem > 0 : (4...6).contains(filter.indexOfSelectedItem)
         items = catalog.filter { item in
             let matches = query.isEmpty || scores[item.id] != nil
@@ -935,11 +1260,15 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         }
     }
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        LibraryWallpaperRow()
+    }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
         let text = NSTextField(labelWithString: (store.catalog.favorites.contains(item.id) ? "★  " : "") + item.title)
         text.lineBreakMode = .byTruncatingTail
-        let cell = NSTableCellView()
+        let cell = LibraryWallpaperCell()
+        text.textColor = NekoIcons.ivory
         cell.textField = text
         let thumbnail = NSImageView()
         thumbnail.imageScaling = .scaleProportionallyUpOrDown
@@ -965,10 +1294,36 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         ])
         return cell
     }
+    private let displayArtwork = NSCache<NSURL, NSImage>()
     func requestPlaybackArtwork(_ url: URL, completion: @escaping (NSImage) -> Void) {
-        let item = Item(id: "playback:" + url.standardizedFileURL.path,
-                        title: url.deletingPathExtension().lastPathComponent, builtin: url, entry: nil)
-        requestThumbnail(for: item, completion: completion)
+        if let image = displayArtwork.object(forKey: url as NSURL) { completion(image); return }
+        displayArtwork.totalCostLimit = 48 * 1024 * 1024
+        thumbnailQueue.addOperation { [weak self] in
+            guard let self else { return }
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let source: CGImage?
+            if ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) {
+                source = Self.videoThumbnail(url, maximumWidth: 1536)
+            } else {
+                source = Self.listThumbnail(url.pathExtension == "idlesse" ? url.appendingPathComponent("preview.jpg") : url, maximumWidth: 1536)
+            }
+            guard let source else {
+                DispatchQueue.main.async {
+                    let item = Item(id: "playback:" + url.standardizedFileURL.path,
+                                    title: url.lastPathComponent, builtin: url, entry: nil)
+                    self.requestThumbnail(for: item, completion: completion)
+                }
+                return
+            }
+            let framing = Self.thumbnailFramingData(url).flatMap { try? JSONDecoder().decode(SceneFraming.self, from: $0) }
+            let rendered = Self.framedThumbnail(source, framing: framing, video: true, width: 1536) ?? source
+            let image = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
+            DispatchQueue.main.async {
+                self.displayArtwork.setObject(image, forKey: url as NSURL, cost: source.width * source.height * 4)
+                completion(image)
+            }
+        }
     }
 
     private let readyThumbnails = NSCache<NSString, NSImage>()
@@ -984,12 +1339,14 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             pendingThumbnails[requestID]?.append(completion)
             return
         }
-        guard let opened = try? open(item) else { return }
+        let accessRequest = item.entry.map { store.accessRequest($0) }
+        guard item.builtin != nil || accessRequest != nil else { return }
         pendingThumbnails[requestID] = [completion]
         thumbnailJobsStarted += 1
         let finish: (NSImage?) -> Void = { [weak self] image in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.queuedThumbnails.removeValue(forKey: requestID)
                 let callbacks = self.pendingThumbnails.removeValue(forKey: requestID) ?? []
                 guard self.thumbnailRevisions[item.id, default: 0] == revision else { return }
                 if let image {
@@ -1004,10 +1361,23 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                 }
             }
         }
-        let posterAccess: SceneLibraryStore.Access? = item.entry.flatMap { try? store.accessPoster($0) }
-        thumbnailQueue.addOperation { [weak self, opened, posterAccess] in
+        let operation = BlockOperation { [weak self, accessRequest] in
             guard let self else { return }
+            let opened: OpenedItem
+            do {
+                if let builtin = item.builtin { opened = OpenedItem(url: builtin, access: nil) }
+                else if let accessRequest {
+                    let access = try accessRequest.open()
+                    opened = OpenedItem(url: access.url, access: access)
+                } else { finish(nil); return }
+            } catch { finish(nil); return }
+            let posterAccess = try? accessRequest?.openPoster()
+            defer { withExtendedLifetime((opened.access, posterAccess)) {} }
             let source = opened.url
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.thumbnailRevisions[item.id, default: 0] == revision else { return }
+                self.resolvedMediaURLs[item.id] = source.standardizedFileURL
+            }
             let stamp = try? source.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
             let framingData = Self.thumbnailFramingData(source)
             let framing = framingData.flatMap { try? JSONDecoder().decode(SceneFraming.self, from: $0) }
@@ -1038,6 +1408,9 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             self.thumbnails.setObject(result, forKey: key, cost: Int(rendered.width * rendered.height * 4))
             finish(result)
         }
+        operation.queuePriority = visibleThumbnailIDs.isEmpty ? .normal : (visibleThumbnailIDs.contains(item.id) ? .veryHigh : .low)
+        queuedThumbnails[requestID] = (item.id, operation)
+        thumbnailQueue.addOperation(operation)
     }
     private static let thumbnailColorContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -1051,7 +1424,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
 
     /// Work on the bounded poster, never a second live renderer or full video decode.
     /// Gallery cards use a 16:9 viewport; each actual display can crop differently.
-    private static func framedThumbnail(_ original: CGImage, framing: SceneFraming?, video: Bool) -> CGImage? {
+    private static func framedThumbnail(_ original: CGImage, framing: SceneFraming?, video: Bool, width: Int = 640) -> CGImage? {
         guard let framing else { return original }
         var image = original
         if video, let tone = framing.tone, !tone.isNeutral {
@@ -1059,10 +1432,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             image = thumbnailColorContext.createCGImage(tone.apply(to: source), from: source.extent) ?? image
         }
         guard framing.focus != nil || framing.bleed?.isEmpty == false else { return image }
-        guard let context = CGContext(data: nil, width: 320, height: 180, bitsPerComponent: 8,
-            bytesPerRow: 1280, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        guard let context = CGContext(data: nil, width: width, height: width * 9 / 16, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let bounds = CGRect(x: 0, y: 0, width: 320, height: 180)
+        let bounds = CGRect(x: 0, y: 0, width: width, height: width * 9 / 16)
         let frame = (framing.focus ?? .centre).filledFrame(
             content: CGSize(width: image.width, height: image.height), in: bounds, bleed: framing.bleed)
         context.interpolationQuality = .high
@@ -1070,18 +1443,18 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         return context.makeImage()
     }
 
-    private static func listThumbnail(_ url: URL) -> CGImage? {
+    private static func listThumbnail(_ url: URL, maximumWidth: Int = 640) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 320
+            kCGImageSourceThumbnailMaxPixelSize: maximumWidth
         ] as CFDictionary)
     }
-    private static func videoThumbnail(_ url: URL) -> CGImage? {
+    private static func videoThumbnail(_ url: URL, maximumWidth: Int = 640) -> CGImage? {
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 320, height: 180)
+        generator.maximumSize = CGSize(width: maximumWidth, height: maximumWidth * 9 / 16)
         // Some encodes have no independently decodable frame at time zero.
         for seconds in [0.5, 0, 2] {
             if let image = try? generator.copyCGImage(at: CMTime(seconds: seconds, preferredTimescale: 600), actualTime: nil) { return image }
@@ -1238,9 +1611,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         edit.isEnabled = selected != nil
         remove.isEnabled = selected?.entry != nil
         more.isEnabled = selected != nil
-        more.item(at: 3)?.isEnabled = selected?.entry != nil
+        more.item(at: 2)?.isEnabled = selected?.entry != nil
         adjust.isEnabled = canAdjustSelection
-        more.item(at: 4)?.isEnabled = canAdjustSelection
         collectionActions.removeAllItems()
         collectionActions.addItems(withTitles: [rotationTimer == nil ? "Collections…" : "Collections · Rotating every \(rotationMinutes)m", "New Collection…"])
         if filter.selectedItem?.representedObject is String {
@@ -1261,7 +1633,10 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             return
         }
         if titleLabel.stringValue != selected.title { titleLabel.stringValue = selected.title }
-        favorite.title = store.catalog.favorites.contains(selected.id) ? "★" : "☆"
+        favorite.title = ""
+        favorite.image = NekoIcons.image(store.catalog.favorites.contains(selected.id) ? "favoriteSelected" : "favorite")
+        favorite.imagePosition = .imageOnly
+        favorite.contentTintColor = store.catalog.favorites.contains(selected.id) ? NekoIcons.accent : NekoIcons.ivory
         setDetail(knownDetails[selected.id] ?? "")
         task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1531,9 +1906,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
                     title: candidate.deletingPathExtension().lastPathComponent, mediaType: type,
                     observation: .init(byteLength: values.fileSize.map(Int64.init), modifiedAt: values.contentModificationDate)))
             }
-            guard entries.count <= SceneLibraryStore.maxSourceEntries else {
-                throw SceneLibraryStore.libraryFailure("The Library supports up to 4096 source-backed entries.")
-            }
+
         }
         if let enumerationError { throw enumerationError }
         return entries.sorted { $0.relativeMediaPath.localizedStandardCompare($1.relativeMediaPath) == .orderedAscending }
@@ -1628,9 +2001,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     @objc private func moreAction() {
         switch more.indexOfSelectedItem {
         case 1: refreshPreview()
-        case 2: duplicateScene()
-        case 3: removeScene()
-        case 4: frameScene()
+        case 2: removeScene()
         default: break
         }
     }
@@ -1639,9 +2010,24 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         do { try store.favorite(selected.id); reload() } catch { reportTask(error.localizedDescription) }
     }
     @objc private func removeScene() {
-        guard let selected, selected.entry != nil else { return }
-        do { try store.remove(selected.id); cache.removeValue(forKey: selected.id); cacheOrder.removeAll { $0 == selected.id }; reload() }
-        catch { reportTask(error.localizedDescription) }
+        guard let selected, let entry = selected.entry else { return }
+        let wasFavorite = store.catalog.favorites.contains(entry.id)
+        let recent = store.catalog.recent[entry.id]
+        let collections = store.catalog.collections.filter { $0.sceneIDs.contains(entry.id) }.map(\.id)
+        do {
+            try store.remove(entry.id)
+            presentationWindow?.undoManager?.registerUndo(withTarget: self) { controller in
+                do {
+                    try controller.store.restoreRemovedEntry(entry, favorite: wasFavorite,
+                        recent: recent, collectionIDs: collections)
+                    controller.reload(selecting: entry.id)
+                } catch { controller.reportTask(error.localizedDescription) }
+            }
+            presentationWindow?.undoManager?.setActionName("Remove Wallpaper")
+            cache.removeValue(forKey: entry.id)
+            cacheOrder.removeAll { $0 == entry.id }
+            reload()
+        } catch { reportTask(error.localizedDescription) }
     }
     @objc private func useScene() { act(editing: false) }
     var hasCycleCandidates: Bool { items.count > 1 }
@@ -1889,7 +2275,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
             } else {
                 stopRotation()
                 retainUseAccess(opened.access)
-                onUse(opened.url)
+                if let displayCanvas { displayCanvas.applyLibraryWallpaper(opened.url) }
+                else { onUse(opened.url) }
                 if !embedded { window?.orderOut(nil) }
             }
         } catch { reportTask(error.localizedDescription) }
@@ -2044,6 +2431,7 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         legacyAccess.close()
 
         let duplicateRequest = Item(id: "smoke.shared-thumbnail", title: "Undertow", builtin: controller.selected!.builtin, entry: nil)
+        LibraryGridView.smokeReuse(template: duplicateRequest)
         let jobsBefore = controller.thumbnailJobsStarted
         var thumbnailCompletions = 0
         let thumbnailStart = ProcessInfo.processInfo.systemUptime
@@ -2059,6 +2447,31 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         controller.requestThumbnail(for: duplicateRequest) { _ in cachedThumbnailDelivered = true }
         precondition(cachedThumbnailDelivered && controller.thumbnailJobsStarted == jobsBefore + 1,
                      "Revisited thumbnails must be delivered synchronously without another job")
+
+        // Exercise actual queue ordering after a fast scroll changes demand.
+        do {
+            let concurrency = controller.thumbnailQueue.maxConcurrentOperationCount
+            controller.thumbnailQueue.isSuspended = true
+            controller.thumbnailQueue.maxConcurrentOperationCount = 1
+            defer {
+                controller.thumbnailQueue.isSuspended = false
+                controller.thumbnailQueue.maxConcurrentOperationCount = concurrency
+                controller.prioritizeThumbnails([])
+            }
+            let old = Item(id: "smoke.offscreen", title: "Offscreen", builtin: duplicateRequest.builtin, entry: nil)
+            let visible = Item(id: "smoke.visible", title: "Visible", builtin: duplicateRequest.builtin, entry: nil)
+            var delivered: [String] = []
+            controller.requestThumbnail(for: old) { _ in delivered.append(old.id) }
+            controller.requestThumbnail(for: visible) { _ in delivered.append(visible.id) }
+            controller.prioritizeThumbnails([visible.id])
+            controller.thumbnailQueue.isSuspended = false
+            let deadline = Date().addingTimeInterval(10)
+            while delivered.count < 2 && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            precondition(delivered == [visible.id, old.id], "Visible thumbnail work must overtake queued offscreen work")
+            print("Thumbnail priority passed: visible artwork decoded before offscreen backlog")
+        }
 
         let beforeSaveRevision = controller.thumbnailRevisions[duplicateRequest.id, default: 0]
         let selectedBeforeSave = controller.selected?.id
@@ -2078,7 +2491,8 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
         }
         precondition(!staleDelivered, "A refreshed thumbnail must reject the older in-flight result")
         precondition(refreshedThumbnail != nil)
-        precondition(max(refreshedThumbnail!.size.width, refreshedThumbnail!.size.height) <= 320)
+        precondition(max(refreshedThumbnail!.size.width, refreshedThumbnail!.size.height) <= 640,
+                     "Refreshed gallery posters must respect the 640-pixel decode budget")
 
         let originalDetail = controller.detail.stringValue
         controller.reportTask("Importing 1 of 2…")
@@ -2300,7 +2714,22 @@ final class SceneLibraryController: NSWindowController, NSTableViewDataSource, N
     }
 }
 
+private final class NekoSearchButtonCell: NSButtonCell {
+    override func drawInterior(withFrame frame: NSRect, in controlView: NSView) {
+        NekoIcons.image("search").draw(in: NSRect(x: frame.midX - 10, y: frame.midY - 10,
+                                               width: 20, height: 20), from: .zero,
+                                       operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+}
 private final class CenteredLibrarySearchCell: NSSearchFieldCell {
+    override func resetSearchButtonCell() {
+        super.resetSearchButtonCell()
+        let replacement = NekoSearchButtonCell(textCell: "")
+        replacement.target = searchButtonCell?.target
+        replacement.action = searchButtonCell?.action
+        replacement.isBordered = false
+        searchButtonCell = replacement
+    }
     override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
         var button = super.searchButtonRect(forBounds: rect)
         button.origin.y = rect.midY - button.height / 2
@@ -2315,6 +2744,8 @@ private final class CenteredLibrarySearchCell: NSSearchFieldCell {
 
 /// The inspector artwork is a drag source, just like a gallery card.
 private final class LibraryDraggablePreview: NSImageView, NSDraggingSource {
+    var onImageChange: ((NSImage?) -> Void)?
+    override var image: NSImage? { didSet { onImageChange?(image) } }
     var onDragURL: (() -> URL?)?
     var onDragEnd: (() -> Void)?
     private var origin: NSPoint?
@@ -2331,4 +2762,317 @@ private final class LibraryDraggablePreview: NSImageView, NSDraggingSource {
     override func mouseUp(with event: NSEvent) { origin = nil }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragEnd?() }
+}
+
+/// Low-resolution color sampling follows poster updates, never playback frames.
+private final class LibraryPreviewGlass: NSVisualEffectView {
+    private let colorWash = CAGradientLayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        colorWash.startPoint = CGPoint(x: 0, y: 0)
+        colorWash.endPoint = CGPoint(x: 1, y: 1)
+        layer?.addSublayer(colorWash)
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NekoIcons.accent.withAlphaComponent(0.7).cgColor
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 8
+            glass.frame = bounds
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        colorWash.frame = bounds
+        CATransaction.commit()
+    }
+    func tint(_ colors: [NSColor], reversed: Bool) {
+        colorWash.colors = (reversed ? Array(colors.reversed()) : colors).map { ($0.blended(withFraction: 0.32, of: NekoIcons.accent) ?? $0).withAlphaComponent(0.46).cgColor }
+    }
+    static func palette(_ image: NSImage?) -> [NSColor] {
+        guard let image, let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3,
+            pixelsHigh: 1, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 12, bitsPerPixel: 32),
+            let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            return [.darkGray, .darkGray, .darkGray]
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: 3, height: 1), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        return (0..<3).map { x in
+            let color = bitmap.colorAt(x: x, y: 0)?.usingColorSpace(.deviceRGB) ?? .darkGray
+            return NSColor(calibratedHue: color.hueComponent,
+                saturation: min(0.85, color.saturationComponent * 1.3),
+                brightness: max(0.35, color.brightnessComponent), alpha: 1)
+        }
+    }
+}
+
+private final class LibraryPreviewLight: NSView {
+    private let wash = CAGradientLayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        wash.startPoint = CGPoint(x: 0.5, y: 0)
+        wash.endPoint = CGPoint(x: 0.5, y: 1)
+        layer?.addSublayer(wash)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        wash.frame = bounds
+        CATransaction.commit()
+    }
+    func tint(_ colors: [NSColor]) {
+        wash.colors = [colors[0].withAlphaComponent(0.04).cgColor,
+                       colors[1].withAlphaComponent(0.12).cgColor,
+                       colors[2].withAlphaComponent(0).cgColor]
+        wash.locations = [0, 0.24, 0.8]
+    }
+}
+
+/// Center the symbol and title as one group instead of AppKit's edge-aligned image.
+private final class LibraryPreviewActionCell: NSButtonCell {
+    override func drawInterior(withFrame frame: NSRect, in controlView: NSView) {
+        let color = isEnabled ? NSColor.labelColor : NSColor.secondaryLabelColor
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: color]
+        let text = title as NSString
+        let size = text.size(withAttributes: attributes)
+        let iconSize: CGFloat = 13
+        let left = frame.midX - (size.width + iconSize + 6) / 2
+        let icon = NSRect(x: left, y: frame.midY - iconSize / 2, width: iconSize, height: iconSize)
+        color.setFill()
+        NSBezierPath(ovalIn: icon).fill()
+        NSColor.windowBackgroundColor.setFill()
+        if title == "Stop Preview" || title == "Cancel Preview" {
+            NSBezierPath(rect: icon.insetBy(dx: 4, dy: 4)).fill()
+        } else {
+            let triangle = NSBezierPath()
+            triangle.move(to: NSPoint(x: icon.minX + 5, y: icon.minY + 3.5))
+            triangle.line(to: NSPoint(x: icon.minX + 9.5, y: icon.midY))
+            triangle.line(to: NSPoint(x: icon.minX + 5, y: icon.maxY - 3.5))
+            triangle.close()
+            triangle.fill()
+        }
+        text.draw(at: NSPoint(x: left + iconSize + 6, y: frame.midY - size.height / 2),
+                  withAttributes: attributes)
+    }
+}
+
+/// Aligns the switch to actual gallery geometry, independent of toolbar spacing.
+private final class LibraryAlignedLayoutControl: NSView {
+    private let control: NSView
+    private let trailingEdge: () -> CGFloat?
+    init(control: NSView, trailingEdge: @escaping () -> CGFloat?) {
+        self.control = control
+        self.trailingEdge = trailingEdge
+        super.init(frame: NSRect(x: 0, y: 0, width: 108, height: 36))
+        control.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(control)
+        widthAnchor.constraint(equalToConstant: 108).isActive = true
+        heightAnchor.constraint(equalToConstant: 36).isActive = true
+    }
+    required init?(coder: NSCoder) { nil }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); needsLayout = true }
+    override func layout() {
+        super.layout()
+        let desiredRight = trailingEdge().map { convert(NSPoint(x: $0, y: 0), from: nil).x } ?? bounds.maxX
+        let right = max(bounds.minX + 84, min(bounds.maxX, desiredRight))
+        control.frame = NSRect(x: right - 84, y: bounds.midY - 18, width: 84, height: 36)
+    }
+}
+
+private final class LibraryLayoutSwitch: NSButton {
+    var isGrid = true { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        let outer = bounds.insetBy(dx: 1, dy: 1)
+        NSColor.white.withAlphaComponent(0.07).setFill()
+        NSBezierPath(roundedRect: outer, xRadius: 12, yRadius: 12).fill()
+        let half = outer.width / 2
+        let selection = NSRect(x: outer.minX + (isGrid ? half : 0), y: outer.minY,
+                               width: half, height: outer.height).insetBy(dx: 2, dy: 2)
+        NSColor(calibratedRed: 0.66, green: 0.57, blue: 0.73, alpha: isHighlighted ? 0.30 : 0.20).setFill()
+        NSBezierPath(roundedRect: selection, xRadius: 9, yRadius: 9).fill()
+        for (index, symbol) in ["list.bullet", "square.grid.2x2"].enumerated() {
+            NekoIcons.image(index == 0 ? "list" : "grid").draw(
+                in: NSRect(x: outer.minX + CGFloat(index) * half + (half - 19) / 2,
+                           y: bounds.midY - 9.5, width: 19, height: 19),
+                from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+}
+
+private final class LibraryOrganizeMenu: NSPopUpButton {
+    override func draw(_ dirtyRect: NSRect) {
+        if imagePosition != .imageOnly { super.draw(dirtyRect); return }
+        NekoIcons.image("more").draw(
+            in: NSRect(x: bounds.midX - 9.5, y: bounds.midY - 9.5, width: 19, height: 19),
+            from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+}
+
+/// Overlay belongs to the gallery, with no native scroller reservation or track.
+private final class LibraryGalleryScrollView: NSScrollView {
+    private lazy var floatingThumb = LibraryGalleryThumb(scroll: self)
+    override func tile() {
+        super.tile()
+        if floatingThumb.superview == nil { addSubview(floatingThumb) }
+        // Match the gallery's 10-point artwork inset. The entire thumb sits
+        // over artwork, with its right edge flush to the thumbnail edge.
+        floatingThumb.frame = NSRect(x: bounds.maxX - 22, y: bounds.minY + 10,
+                                    width: 12, height: max(0, bounds.height - 20))
+        floatingThumb.needsLayout = true
+    }
+    override func reflectScrolledClipView(_ clipView: NSClipView) {
+        super.reflectScrolledClipView(clipView)
+        floatingThumb.needsLayout = true
+    }
+}
+private final class LibraryGalleryThumb: NSView {
+    private weak var scroll: NSScrollView?
+    private var dragStart: CGFloat?
+    private var scrollStart: CGFloat = 0
+    init(scroll: NSScrollView) {
+        self.scroll = scroll
+        super.init(frame: .zero)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.scrollBar)
+        setAccessibilityLabel("Wallpaper gallery scroll position")
+        setAccessibilityOrientation(.vertical)
+    }
+    override func accessibilityValue() -> Any? {
+        guard let scroll, let document = scroll.documentView else { return 0.0 }
+        return Double(min(1, max(0, scroll.contentView.bounds.minY / max(1, document.bounds.height - scroll.contentView.bounds.height))))
+    }
+    override func setAccessibilityValue(_ value: Any?) {
+        guard let number = value as? NSNumber, let scroll, let document = scroll.documentView else { return }
+        let range = max(0, document.bounds.height - scroll.contentView.bounds.height)
+        scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX,
+            y: CGFloat(min(1, max(0, number.doubleValue))) * range))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+    override func accessibilityPerformIncrement() -> Bool { accessibilityPage(1) }
+    override func accessibilityPerformDecrement() -> Bool { accessibilityPage(-1) }
+    private func accessibilityPage(_ direction: CGFloat) -> Bool {
+        guard let scroll, let document = scroll.documentView else { return false }
+        let range = max(0, document.bounds.height - scroll.contentView.bounds.height)
+        let y = min(range, max(0, scroll.contentView.bounds.minY + direction * scroll.contentView.bounds.height * 0.9))
+        scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        return true
+    }
+    required init?(coder: NSCoder) { nil }
+    override var isFlipped: Bool { true }
+    private var knob: NSRect {
+        guard let scroll, let document = scroll.documentView else { return .zero }
+        let visible = scroll.contentView.bounds.height
+        let total = document.bounds.height
+        guard total > visible, bounds.height > 0 else { return .zero }
+        let height = min(bounds.height, max(34, bounds.height * visible / total))
+        let fraction = min(1, max(0, scroll.contentView.bounds.minY / (total - visible)))
+        return NSRect(x: 0, y: fraction * (bounds.height - height), width: bounds.width, height: height)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        knob.insetBy(dx: -3, dy: -3).contains(convert(point, from: superview)) ? self : nil
+    }
+    private lazy var glass: NSView = {
+        let result: NSView
+        if #available(macOS 26.0, *) {
+            let native = NSGlassEffectView()
+            native.style = .clear
+            native.cornerRadius = 6
+            native.tintColor = NSColor(calibratedWhite: 0.08, alpha: 0.14)
+            result = native
+        } else {
+            let material = NSVisualEffectView()
+            material.material = .hudWindow
+            material.blendingMode = .withinWindow
+            material.state = .active
+            material.wantsLayer = true
+            material.layer?.cornerRadius = 5
+            material.layer?.masksToBounds = true
+            result = material
+        }
+        addSubview(result)
+        return result
+    }()
+    override func layout() {
+        super.layout()
+        // Update geometry outside drawing so scrolling does not recreate or
+        // implicitly animate the native glass surface.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        glass.frame = knob
+        glass.isHidden = knob.isEmpty
+        CATransaction.commit()
+    }
+    override func mouseDown(with event: NSEvent) {
+        dragStart = convert(event.locationInWindow, from: nil).y
+        scrollStart = scroll?.contentView.bounds.minY ?? 0
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let dragStart, let scroll, let document = scroll.documentView else { return }
+        let range = max(0, document.bounds.height - scroll.contentView.bounds.height)
+        let travel = max(1, bounds.height - knob.height)
+        let delta = convert(event.locationInWindow, from: nil).y - dragStart
+        let y = min(range, max(0, scrollStart + delta * range / travel))
+        scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+    override func mouseUp(with event: NSEvent) { dragStart = nil }
+}
+
+
+private final class LibraryWallpaperCell: NSTableCellView {
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { textField?.textColor = NekoIcons.ivory }
+    }
+}
+
+/// Selected rows share the native material used by artwork hover captions.
+private final class LibraryWallpaperRow: NSTableRowView {
+    private let selectionSurface: NSView
+    override init(frame: NSRect) {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 8
+            selectionSurface = glass
+        } else {
+            let glass = NSVisualEffectView()
+            glass.material = .hudWindow
+            glass.blendingMode = .withinWindow
+            glass.state = .active
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = 8
+            glass.layer?.masksToBounds = true
+            selectionSurface = glass
+        }
+        super.init(frame: frame)
+        selectionSurface.isHidden = true
+        selectionSurface.setAccessibilityElement(false)
+        addSubview(selectionSurface, positioned: .below, relativeTo: nil)
+    }
+    required init?(coder: NSCoder) { nil }
+    override var isSelected: Bool {
+        didSet { selectionSurface.isHidden = !isSelected }
+    }
+    override func layout() {
+        super.layout()
+        selectionSurface.frame = bounds.insetBy(dx: 6, dy: 2)
+    }
+    override func drawSelection(in dirtyRect: NSRect) {}
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === selectionSurface || hit?.isDescendant(of: selectionSurface) == true ? self : hit
+    }
 }

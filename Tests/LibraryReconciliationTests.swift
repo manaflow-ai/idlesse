@@ -172,7 +172,7 @@ struct LibraryReconciliationChecks {
     }
 
     private static func largeCatalogPureDiff() throws {
-        let count = SceneLibraryStore.maxSourceEntries
+        let count = 8192
         let existing = (0..<count).map { index in
             entry("entry-\(index)", path: "catalog/\(index).mp4", catalogID: "catalog-\(index)")
         }

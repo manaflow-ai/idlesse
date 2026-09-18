@@ -1,10 +1,13 @@
 import AppKit
 
 extension Notification.Name {
+    static let idlesseDisplayPreparationChanged = Notification.Name("IdlesseDisplayPreparationChanged")
     static let idlesseDisplayAssignmentsChanged = Notification.Name("IdlesseDisplayAssignmentsChanged")
 }
 
 private final class DisplayMapView: NSView {
+    var preparing: [UInt32: URL] = [:] { didSet { needsDisplay = true } }
+    var allowsSelection = true
     var artwork: [URL: NSImage] = [:] { didSet { needsDisplay = true } }
     var requestArtwork: ((URL, @escaping (NSImage) -> Void) -> Void)?
     private var pendingArtwork = Set<URL>()
@@ -32,8 +35,18 @@ private final class DisplayMapView: NSView {
 
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
+    private var allTargetFrame: NSRect {
+        NSRect(x: 0, y: 0, width: bounds.width, height: 64)
+    }
+    private var displayFrames: [UInt32: NSRect] {
+        let frames = topology.normalizedFrames(
+            in: NSSize(width: bounds.width, height: max(0, bounds.height - 96)), padding: 0)
+        let top = frames.values.map(\.minY).min() ?? 0
+        return frames.mapValues { $0.offsetBy(dx: 0, dy: allTargetFrame.maxY + 24 - top) }
+    }
     private func previewsDrop(on displayID: UInt32) -> Bool {
         guard let dropTarget else { return false }
+        if dropTarget == 0 { return true }
         guard let target = topology.displays.first(where: { $0.liveID == dropTarget }),
               let display = topology.displays.first(where: { $0.liveID == displayID }) else { return false }
         return topology.master(for: target).liveID == topology.master(for: display).liveID
@@ -41,10 +54,45 @@ private final class DisplayMapView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let frames = topology.normalizedFrames(in: bounds.size, padding: 22)
+        let frames = displayFrames
+        let targetPath = NSBezierPath(roundedRect: allTargetFrame, xRadius: 8, yRadius: 8)
+        NSColor.black.withAlphaComponent(0.3).setFill()
+        targetPath.fill()
+        var sources: [URL] = []
+        for display in topology.displays {
+            if let source = dropTarget == 0 ? dropURL : plan?.assignment(for: display.liveID)?.sourceURL,
+               !sources.contains(source) { sources.append(source) }
+        }
+        NSGraphicsContext.saveGraphicsState()
+        targetPath.addClip()
+        for (index, source) in sources.enumerated() {
+            loadArtwork(source)
+            guard let image = artwork[source] else { continue }
+            let width = allTargetFrame.width / CGFloat(sources.count)
+            let slice = NSRect(x: allTargetFrame.minX + CGFloat(index) * width, y: 0, width: width, height: 64)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: slice).addClip()
+            let scale = max(width / max(1, image.size.width), 64 / max(1, image.size.height))
+            let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+            image.draw(in: NSRect(x: slice.midX - size.width / 2, y: slice.midY - size.height / 2,
+                                 width: size.width, height: size.height), from: .zero,
+                       operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        NSGradient(colors: [.black.withAlphaComponent(0.2), .black.withAlphaComponent(0.75)])?.draw(in: allTargetFrame, angle: 90)
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.white.withAlphaComponent(dropTarget == 0 ? 0.65 : 0.14).setStroke()
+        targetPath.lineWidth = dropTarget == 0 ? 1.5 : 0.5
+        targetPath.stroke()
+        let label = dropTarget == 0 ? "Release to apply to all displays" : "All displays"
+        (label as NSString).draw(at: NSPoint(x: allTargetFrame.minX + 12, y: 14), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white])
+        let caption = sources.count == 1 ? displayName(sources[0]) : (sources.isEmpty ? "No wallpaper" : "Different wallpapers")
+        (caption as NSString).draw(in: NSRect(x: allTargetFrame.minX + 12, y: 34, width: allTargetFrame.width - 24, height: 16), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor.white.withAlphaComponent(0.85)])
         for display in topology.displays {
             guard let frame = frames[display.liveID] else { continue }
-            let selected = selectedID == display.liveID
+            let selected = allowsSelection && selectedID == display.liveID
             let mirrored = display.mirrorMasterID != nil
             let master = topology.master(for: display)
             let path = NSBezierPath(roundedRect: frame, xRadius: 9, yRadius: 9)
@@ -67,8 +115,8 @@ private final class DisplayMapView: NSView {
                     NSGraphicsContext.restoreGraphicsState()
                 }
             }
-            (previewsDrop(on: display.liveID) ? NSColor.white : (selected ? NSColor.labelColor : NSColor.separatorColor)).setStroke()
-            path.lineWidth = selected ? 2 : 1
+            (previewsDrop(on: display.liveID) ? NSColor.white : (selected ? NekoIcons.accent.withAlphaComponent(0.7) : NSColor.white.withAlphaComponent(0.16))).setStroke()
+            path.lineWidth = selected ? 1.2 : 0.5
             path.stroke()
 
             if mirrored {
@@ -100,7 +148,9 @@ private final class DisplayMapView: NSView {
                                width: max(10, frame.width - 20), height: 15),
                     withAttributes: detailAttributes)
             }
-            let sourceCaption = previewsDrop(on: display.liveID) ? "Release to assign" : (assignment?.sourceURL.map(displayName) ?? "No Wallpaper")
+            let pending = preparing[master.liveID]
+            let sourceCaption = previewsDrop(on: display.liveID) ? "Release to assign" :
+                (pending.map { "Preparing · " + displayName($0) } ?? assignment?.sourceURL.map(displayName) ?? "No Wallpaper")
             (sourceCaption as NSString).draw(
                 in: NSRect(x: frame.minX + 10, y: frame.maxY - 26,
                            width: max(10, frame.width - 20), height: 15),
@@ -109,8 +159,9 @@ private final class DisplayMapView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard allowsSelection else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let frames = topology.normalizedFrames(in: bounds.size, padding: 22)
+        let frames = displayFrames
         selectedID = topology.displays.reversed().first {
             frames[$0.liveID]?.contains(point) == true
         }?.liveID
@@ -154,13 +205,13 @@ private final class DisplayMapView: NSView {
 
     private func destination(for sender: NSDraggingInfo) -> (UInt32, URL)? {
         let point = convert(sender.draggingLocation, from: nil)
-        let frames = topology.normalizedFrames(in: bounds.size, padding: 22)
-        guard let display = topology.displays.reversed().first(where: {
-                  frames[$0.liveID]?.contains(point) == true
-              }),
-              let item = sender.draggingPasteboard.pasteboardItems?.first,
+        let frames = displayFrames
+        guard let item = sender.draggingPasteboard.pasteboardItems?.first,
               let value = item.string(forType: .fileURL),
-              let url = URL(string: value) else { return nil }
+              let url = URL(string: value), url.isFileURL else { return nil }
+        guard let display = topology.displays.reversed().first(where: {
+            frames[$0.liveID]?.contains(point) == true
+        }) else { return allTargetFrame.contains(point) ? (0, url) : nil }
         return (display.liveID, url)
     }
 
@@ -185,19 +236,30 @@ final class DisplayAssignmentViewController: NSViewController {
     private let compact: Bool
     private weak var wallpaper: WallpaperController?
     private let mode = NSSegmentedControl(
-        labels: ["Same on All", "Per Display", "Desktop Span"],
+        labels: ["Same Wallpaper Everywhere", "Customize Each Display"],
         trackingMode: .selectOne, target: nil, action: nil)
-    private let arrangement = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let rememberArrangement = NSButton(title: "Remember Setup", target: nil, action: nil)
+    private let arrangement = NSTextField(labelWithString: "")
+    private let spanStatus = NSTextField(wrappingLabelWithString: "This wallpaper spans the desktop. Your individual display assignments are kept for later.")
+    private let rememberArrangement = NSButton(title: "Remember This Setup", target: nil, action: nil)
     private let mapView = DisplayMapView(frame: .zero)
     private let detailTitle = NSTextField(labelWithString: "")
     private let detailText = NSTextField(wrappingLabelWithString: "")
-    private let useDefault = NSButton(title: "Use Default", target: nil, action: nil)
+    private let useDefault = NSButton(title: "Use Shared Wallpaper", target: nil, action: nil)
     private let openLibrary = NSButton(title: "Choose in Library…", target: nil, action: nil)
     private let hint = NSTextField(wrappingLabelWithString: "")
     private var topology = DisplayTopology(displays: [])
     private var plan: ResolvedWallpaperAssignmentPlan?
     private var selectedID: UInt32?
+    func applyLibraryWallpaper(_ url: URL) {
+        wallpaper?.assignLibraryWallpaper(url, to: nil)
+    }
+
+    func libraryTargetContains(_ url: URL) -> Bool {
+        !topology.displays.isEmpty && topology.displays.allSatisfy {
+            plan?.assignment(for: $0.liveID)?.sourceURL?.standardizedFileURL == url.standardizedFileURL
+        }
+    }
+    var onLibraryTargetChange: (() -> Void)?
     private var pendingLibraryTarget: PendingLibraryTarget?
     private var reconcilingLibraryTarget = false
     private var topologyRefreshWorkItem: DispatchWorkItem?
@@ -211,6 +273,11 @@ final class DisplayAssignmentViewController: NSViewController {
         observers.append(NotificationCenter.default.addObserver(
             forName: .idlesseDisplayAssignmentsChanged, object: wallpaper, queue: .main) { [weak self] _ in
                 self?.assignmentDidChange()
+            })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .idlesseDisplayPreparationChanged, object: wallpaper, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.mapView.preparing = self.wallpaper?.preparingDisplayURLs ?? [:]
             })
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -248,30 +315,30 @@ final class DisplayAssignmentViewController: NSViewController {
     private func installContent(in content: NSView) {
         let title = NSTextField(labelWithString: "Displays")
         title.font = .systemFont(ofSize: 25, weight: .semibold)
-        let subtitle = NSTextField(wrappingLabelWithString:
-            "Your wallpapers, arranged like your screens.")
-        subtitle.textColor = .secondaryLabelColor
-
-        mode.selectedSegmentBezelColor = .controlColor
+        mode.selectedSegmentBezelColor = NekoIcons.accent
         mode.target = self
         mode.action = #selector(changeMode(_:))
         mode.setContentHuggingPriority(.required, for: .horizontal)
         arrangement.setAccessibilityLabel("Known display arrangement")
         arrangement.setContentHuggingPriority(.required, for: .horizontal)
-        arrangement.isEnabled = false
+        arrangement.textColor = NekoIcons.ivory
+        arrangement.font = .systemFont(ofSize: 12, weight: .medium)
+        spanStatus.textColor = .secondaryLabelColor
+        spanStatus.font = .systemFont(ofSize: 12)
         rememberArrangement.target = self
         rememberArrangement.action = #selector(rememberCurrentArrangement)
         rememberArrangement.bezelStyle = .rounded
         rememberArrangement.setContentHuggingPriority(.required, for: .horizontal)
         let spacer = NSView(frame: .zero)
-        let controls = NSStackView(views: [mode, spacer, arrangement, rememberArrangement])
+        let controls = NSStackView(views: [mode, spanStatus, spacer, arrangement, rememberArrangement])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = 10
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        mapView.allowsSelection = !compact
         mapView.translatesAutoresizingMaskIntoConstraints = false
-        mapView.heightAnchor.constraint(equalToConstant: compact ? 160 : 285).isActive = true
+        mapView.heightAnchor.constraint(equalToConstant: compact ? 250 : 375).isActive = true
         mapView.onSelection = { [weak self] id in self?.select(id) }
         mapView.onDrop = { [weak self] id, url in self?.assign(url, to: id) }
 
@@ -285,7 +352,7 @@ final class DisplayAssignmentViewController: NSViewController {
         let buttons = NSStackView(views: [useDefault, openLibrary])
         buttons.spacing = 8
         hint.textColor = .secondaryLabelColor
-        hint.stringValue = "Drag a wallpaper onto a display to preview its placement. Release to apply to that display."
+        mapView.toolTip = "Drop a wallpaper onto a screen to assign it, or onto All displays to use it everywhere."
 
         let detailBox = NSBox()
         detailBox.boxType = .custom
@@ -293,7 +360,7 @@ final class DisplayAssignmentViewController: NSViewController {
         detailBox.cornerRadius = 10
         detailBox.contentViewMargins = NSSize(width: 14, height: 12)
         if let boxContent = detailBox.contentView {
-            let detailStack = NSStackView(views: [detailTitle, detailText, buttons, hint])
+            let detailStack = NSStackView(views: [detailTitle, detailText, buttons])
             detailStack.orientation = .vertical
             detailStack.alignment = .leading
             detailStack.spacing = 8
@@ -308,15 +375,13 @@ final class DisplayAssignmentViewController: NSViewController {
             ])
         }
 
-        let canvasTitle = NSTextField(labelWithString: "Drag onto a display")
-        canvasTitle.font = .systemFont(ofSize: 12, weight: .medium)
-        let stack = NSStackView(views: compact ? [canvasTitle, mapView] : [title, subtitle, controls, mapView, detailBox])
+        let stack = NSStackView(views: compact ? [mapView] : [title, controls, mapView, detailBox])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
-        subtitle.widthAnchor.constraint(lessThanOrEqualToConstant: 720).isActive = true
+        spanStatus.widthAnchor.constraint(lessThanOrEqualToConstant: 410).isActive = true
         if !compact { controls.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         mapView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         if !compact { detailBox.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
@@ -350,6 +415,7 @@ final class DisplayAssignmentViewController: NSViewController {
         reloadArrangements(current: current)
         mapView.topology = topology
         mapView.plan = plan
+        mapView.preparing = wallpaper.preparingDisplayURLs
         mapView.setAccessibilityElement(true)
         mapView.setAccessibilityRole(.image)
         mapView.setAccessibilityLabel(topology.displays.map { display in
@@ -360,36 +426,27 @@ final class DisplayAssignmentViewController: NSViewController {
         switch plan?.mode {
         case .sameOnAll: mode.selectedSegment = 0
         case .perDisplay: mode.selectedSegment = 1
-        case .desktopSpan: mode.selectedSegment = 2
+        case .desktopSpan: mode.selectedSegment = -1
         case nil: mode.selectedSegment = 0
         }
-        mode.isEnabled = plan?.mode != .desktopSpan
+        mode.isHidden = plan?.mode == .desktopSpan
+        spanStatus.isHidden = plan?.mode != .desktopSpan
         if selectedID == nil || !topology.displays.contains(where: { $0.liveID == selectedID }) {
             selectedID = topology.displays.first(where: { $0.isMain })?.liveID
                 ?? topology.displays.first?.liveID
         }
         mapView.selectedID = selectedID
+        onLibraryTargetChange?()
         refreshDetail()
     }
 
     private func reloadArrangements(current: DisplayArrangementProfile?) {
-        arrangement.removeAllItems()
-        let profiles = arrangements.profiles().sorted { $0.lastSeen > $1.lastSeen }
-        guard let current else {
-            arrangement.addItem(withTitle: "Unremembered Setup")
-            arrangement.selectItem(at: 0)
-            arrangement.toolTip = arrangements.bestMatch(for: topology).map {
-                "Closest remembered setup: \($0.name). Save only after this dock/display arrangement has settled."
-            } ?? "This settled display arrangement has not been saved."
-            rememberArrangement.isEnabled = !topology.displays.isEmpty
-            return
-        }
-        for profile in profiles {
-            arrangement.addItem(withTitle: profile.name + (profile.id == current.id ? " · Current" : ""))
-        }
-        arrangement.selectItem(at: max(0, profiles.firstIndex(where: { $0.id == current.id }) ?? 0))
-        arrangement.toolTip = "Known docked and undocked arrangements are retained with bounded LRU history."
-        rememberArrangement.isEnabled = false
+        arrangement.stringValue = current?.name ?? ""
+        arrangement.isHidden = current == nil
+        arrangement.toolTip = current == nil ? nil : "Remembered display setup"
+        rememberArrangement.isHidden = current != nil || topology.displays.isEmpty
+        rememberArrangement.isEnabled = !topology.displays.isEmpty
+
     }
 
     @objc private func rememberCurrentArrangement() {
@@ -413,12 +470,10 @@ final class DisplayAssignmentViewController: NSViewController {
             openLibrary.isEnabled = false
             return
         }
-        let master = topology.master(for: display)
         let assignment = plan?.assignment(for: display.liveID)
         detailTitle.stringValue = display.identity.name + (display.isMain ? " · Main Display" : "")
         var details = [
             display.resolutionDescription,
-            "\(Int(display.frame.width)) × \(Int(display.frame.height)) desktop points",
         ]
         if let mirrorID = display.mirrorMasterID,
            let mirrored = topology.displays.first(where: { $0.liveID == mirrorID }) {
@@ -435,6 +490,7 @@ final class DisplayAssignmentViewController: NSViewController {
         useDefault.isEnabled = plan?.mode == .perDisplay
             && assignment?.explicit == true
             && display.mirrorMasterID == nil
+        useDefault.isHidden = !useDefault.isEnabled
         openLibrary.isEnabled = true
     }
 
@@ -452,6 +508,10 @@ final class DisplayAssignmentViewController: NSViewController {
     private func assign(_ url: URL, to displayID: UInt32) {
         guard let wallpaper else { return }
         pendingLibraryTarget = nil
+        if displayID == 0 {
+            wallpaper.assignLibraryWallpaper(url, to: nil)
+            return
+        }
         let display = topology.displays.first(where: { $0.liveID == displayID })
         let target = display.map { topology.master(for: $0).liveID } ?? displayID
         wallpaper.assignLibraryWallpaper(url, to: target, allowsDesktopSpan: false)
@@ -468,19 +528,17 @@ final class DisplayAssignmentViewController: NSViewController {
     /// Set Wallpaper becomes the selected monitor's override, then the prior
     /// shared/default wallpaper is restored. Desktop Span remains global.
     @objc private func showLibrary() {
-        guard let wallpaper, let selectedID,
-              let display = topology.displays.first(where: { $0.liveID == selectedID }) else { return }
-        let master = topology.master(for: display)
-        if plan?.mode == .perDisplay {
-            pendingLibraryTarget = PendingLibraryTarget(
-                liveID: master.liveID,
-                previousDefault: wallpaper.selectedURL,
-                expires: Date().addingTimeInterval(120))
-            hint.stringValue = "Choose a wallpaper in Library within two minutes. Set Wallpaper assigns it to \(master.identity.name) and preserves the current default on the other displays."
-        } else {
-            pendingLibraryTarget = nil
+        guard let selectedID, let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Set Wallpaper"
+        panel.message = "Choose a wallpaper for the selected display."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.assign(url, to: selectedID)
         }
-        if let url = URL(string: "idlesse://wallpapers") { NSWorkspace.shared.open(url) }
     }
 
     private func assignmentDidChange() {

@@ -18,8 +18,8 @@ struct LibraryGridLayoutPlan {
     init(itemCount: Int,
          contentWidth: CGFloat,
          viewportHeight: CGFloat,
-         padding: CGFloat = 18,
-         spacing: CGFloat = 16,
+         padding: CGFloat = 10,
+         spacing: CGFloat = 10,
          minCardWidth: CGFloat = 200) {
         self.itemCount = max(0, itemCount)
         self.contentWidth = max(300, contentWidth)
@@ -30,7 +30,7 @@ struct LibraryGridLayoutPlan {
         let availableWidth = max(1, self.contentWidth - (padding * 2))
         columns = max(1, Int((availableWidth + spacing) / (minCardWidth + spacing)))
         cardWidth = (availableWidth - (CGFloat(columns - 1) * spacing)) / CGFloat(columns)
-        cardHeight = cardWidth * 9.0 / 16.0 + 28
+        cardHeight = cardWidth * 9.0 / 16.0
         rowStride = cardHeight + spacing
         rowCount = self.itemCount == 0 ? 0 : (self.itemCount + columns - 1) / columns
         if rowCount == 0 {
@@ -61,6 +61,16 @@ struct LibraryGridLayoutPlan {
         return index
     }
 
+    /// Keep the leading visible wallpaper and fractional row position on resize.
+    func scrollOrigin(preserving origin: CGFloat, from old: LibraryGridLayoutPlan) -> CGFloat {
+        guard origin > 0, old.itemCount > 0, itemCount > 0 else { return 0 }
+        let row = max(0, Int(floor((origin - old.padding) / old.rowStride)))
+        let index = min(itemCount - 1, row * old.columns)
+        let fraction = (origin - old.padding - CGFloat(row) * old.rowStride) / old.rowStride
+        let target = padding + CGFloat(index / columns) * rowStride + fraction * rowStride
+        return max(0, min(contentHeight - viewportHeight, target))
+    }
+
     /// Returns whole rows around the viewport. The amount of work is bounded by
     /// viewport height + `extraRows`, regardless of a 40-item or 40,000-item catalog.
     func indexes(intersecting rect: NSRect, extraRows: Int = 1) -> Range<Int> {
@@ -88,6 +98,11 @@ final class LibraryGridView: NSView {
     var onSelect: ((LibraryItem) -> Void)?
     var onMenu: ((LibraryItem) -> NSMenu)?
     var onDoubleAction: ((LibraryItem) -> Void)?
+    var onPlaybackAction: ((LibraryItem) -> Void)?
+    var playingIDs: Set<String> = [] { didSet { updateCardPlayback() } }
+    private func updateCardPlayback() {
+        for card in activeCards.values { card.showsPause = card.item.map { playingIDs.contains($0.id) } ?? false }
+    }
     var onRequestThumbnail: ((LibraryItem, @escaping (NSImage) -> Void) -> Void)?
 
     private var items: [LibraryItem] = []
@@ -95,42 +110,25 @@ final class LibraryGridView: NSView {
     private var activeCards: [Int: LibraryCardView] = [:]
     private var reusableCards: [LibraryCardView] = []
     private var layoutPlan: LibraryGridLayoutPlan?
+    var onVisibleItemsChange: ((Set<String>) -> Void)?
+    var onGeometryChange: (() -> Void)?
+    private var windowObservers: [NSObjectProtocol] = []
     private var scrollObserver: NSObjectProtocol?
     private weak var observedClipView: NSClipView?
     private var isRelayouting = false
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
-        for card in activeCards.values {
-            guard !card.artworkLights.isEmpty else { continue }
-            let artwork = convert(card.thumbnailView.bounds, from: card.thumbnailView)
-            let spread = min(72, max(48, artwork.width * 0.22))
-            let gradient = NSGradient(colors: card.artworkLights.map { $0.withAlphaComponent(0.12) })
-            // A broad, smooth falloff lets adjacent colors blend into the surface
-            // without a bright fringe hugging the thumbnail edge.
-            for step in 0..<Int(ceil(spread)) {
-                let distance = CGFloat(step)
-                let t = min(1, distance / spread)
-                let falloff = 1 - t * t * (3 - 2 * t)
-                let outer = artwork.insetBy(dx: -distance - 1, dy: -distance - 1)
-                let inner = artwork.insetBy(dx: -distance, dy: -distance)
-                let ring = NSBezierPath(roundedRect: outer, xRadius: 8 + distance + 1, yRadius: 8 + distance + 1)
-                ring.append(NSBezierPath(roundedRect: inner, xRadius: 8 + distance, yRadius: 8 + distance))
-                ring.windingRule = .evenOdd
-                NSGraphicsContext.saveGraphicsState()
-                ring.addClip()
-                NSGraphicsContext.current?.cgContext.setAlpha(falloff)
-                gradient?.draw(in: outer, angle: 0)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-        }
+    private var lastVisibleRange: Range<Int>?
+    var thumbnailTrailingEdgeInWindow: CGFloat? {
+        guard let plan = layoutPlan, window != nil else { return nil }
+        return convert(NSPoint(x: plan.contentWidth - plan.padding, y: 0), to: nil).x
     }
+
 
     deinit {
         if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     func update(items: [LibraryItem], selectedID: String?) {
@@ -178,6 +176,15 @@ final class LibraryGridView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers.removeAll()
+        if let window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.updatePointerHover()
+                })
+            }
+        }
         attachScrollObserverIfNeeded()
         relayout()
     }
@@ -222,6 +229,7 @@ final class LibraryGridView: NSView {
     }
 
     private func relayout() {
+        lastVisibleRange = nil
         guard !isRelayouting else { return }
         attachScrollObserverIfNeeded()
         let viewport = enclosingScrollView?.contentView.bounds ?? bounds
@@ -230,24 +238,36 @@ final class LibraryGridView: NSView {
         let plan = LibraryGridLayoutPlan(itemCount: items.count,
                                          contentWidth: width,
                                          viewportHeight: height)
+        let previousPlan = layoutPlan
         layoutPlan = plan
 
         isRelayouting = true
         super.setFrameSize(NSSize(width: plan.contentWidth, height: plan.contentHeight))
+        if let previousPlan, previousPlan.contentWidth != plan.contentWidth,
+           let clip = enclosingScrollView?.contentView {
+            let origin = plan.scrollOrigin(preserving: viewport.minY, from: previousPlan)
+            clip.scroll(to: NSPoint(x: 0, y: origin))
+            enclosingScrollView?.reflectScrolledClipView(clip)
+        }
         isRelayouting = false
         updateVisibleCards()
+        onGeometryChange?()
     }
 
     private func updateVisibleCards() {
+        defer { updatePointerHover() }
         guard let plan = layoutPlan else { return }
         let visibleRect = enclosingScrollView?.contentView.bounds ?? bounds
         let targetRange = plan.indexes(intersecting: visibleRect, extraRows: 1)
+        guard targetRange != lastVisibleRange else { return }
+        lastVisibleRange = targetRange
+        onVisibleItemsChange?(Set(targetRange.filter { items.indices.contains($0) }.map { items[$0].id }))
         let target = Set(targetRange)
 
         for index in activeCards.keys.filter({ !target.contains($0) }) {
             guard let card = activeCards.removeValue(forKey: index) else { continue }
             card.prepareForReuse()
-            card.removeFromSuperview()
+            card.isHidden = true
             reusableCards.append(card)
         }
 
@@ -264,17 +284,63 @@ final class LibraryGridView: NSView {
                 card.onDragEnd = { [weak self] in self?.onDragEnd?() }
                 card.onClick = { [weak self] item in self?.selectFromUser(item) }
                 card.onMenu = { [weak self] item in self?.onMenu?(item) }
+                card.onPlaybackAction = { [weak self] item in self?.onPlaybackAction?(item) }
                 card.onDoubleClick = { [weak self] item in self?.doubleActionFromUser(item) }
                 changed = card.configure(item: item)
                 activeCards[index] = card
-                addSubview(card)
+                if card.superview == nil { addSubview(card) }
+                card.isHidden = false
             }
-            if let frame = plan.frame(for: index) { card.frame = frame }
+            if let frame = plan.frame(for: index), card.frame != frame { card.frame = frame }
+            card.showsPause = playingIDs.contains(item.id)
             card.isSelected = item.id == selectedID
             if changed, let onRequestThumbnail {
                 card.requestThumbnail(using: onRequestThumbnail)
             }
         }
+    }
+
+    private func updatePointerHover() {
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let visible = enclosingScrollView?.contentView.bounds ?? bounds
+        for card in activeCards.values {
+            card.setPointerHovered(window.isKeyWindow && visible.contains(point) && card.frame.contains(point))
+        }
+    }
+
+    static func smokeReuse(template: LibraryItem) {
+        let viewport = NSScrollView(frame: NSRect(x: 0, y: 0, width: 1040, height: 640))
+        let gallery = LibraryGridView(frame: viewport.bounds)
+        viewport.documentView = gallery
+        gallery.update(items: (0..<4000).map {
+            LibraryItem(id: "reuse-\($0)", title: "Wallpaper \($0)", builtin: template.builtin, entry: nil)
+        }, selectedID: nil)
+        func travel(_ pass: Int) {
+            for step in 0..<200 {
+                let index = (step * 19 + pass * 7) % 3990
+                let y = gallery.layoutPlan!.frame(for: index)!.minY
+                viewport.contentView.scroll(to: NSPoint(x: 0, y: y))
+                gallery.updateVisibleCards()
+                precondition(gallery.subviews.count < 40, "The retained view pool must remain bounded by the viewport")
+                precondition(gallery.activeCards.values.allSatisfy { !$0.isHidden })
+                precondition(gallery.reusableCards.allSatisfy(\.isHidden))
+            }
+        }
+        travel(0)
+        let playing = gallery.activeCards.values.first!.item!.id
+        gallery.playingIDs = [playing]
+        precondition(gallery.activeCards.values.allSatisfy {
+            $0.showsPause == ($0.item?.id == playing)
+        }, "Pause affordance must follow playback rather than poster selection")
+        gallery.playingIDs = []
+        precondition(gallery.activeCards.values.allSatisfy { !$0.showsPause },
+                     "Pausing playback must restore the play affordance")
+        let retained = Set(gallery.subviews.map(ObjectIdentifier.init))
+        travel(1)
+        precondition(Set(gallery.subviews.map(ObjectIdentifier.init)) == retained,
+                     "Steady-state scrolling must reuse the same attached card views")
+        print("Gallery reuse passed: 400 scroll positions, 4,000 items, \(retained.count) retained card views")
     }
 
     private func selectFromUser(_ item: LibraryItem) {
@@ -316,23 +382,49 @@ final class LibraryGridView: NSView {
 #endif
 }
 
-final class LibraryCardView: NSView, NSDraggingSource {
+final class LibraryCardView: NSView, NSDraggingSource, NSMenuDelegate {
     var onDragURL: ((LibraryItem) -> URL?)?
     var onDragEnd: (() -> Void)?
     private var mouseOrigin: NSPoint?
     private var tracking: NSTrackingArea?
     private var hovered = false
+    private var trackingInteraction = false
     private let quickMenu = LibraryHoverButton(frame: .zero)
+    private let playbackButton = LibraryHoverButton(frame: .zero)
+    var onPlaybackAction: ((LibraryItem) -> Void)?
+    var showsPause = false { didSet {
+        guard oldValue != showsPause else { return }
+        updatePlaybackButton()
+    } }
+    private func updatePlaybackButton() {
+        let title = showsPause ? "Pause wallpaper" : "Play wallpaper"
+        playbackButton.image = NSImage(systemSymbolName: showsPause ? "pause.fill" : "play.fill", accessibilityDescription: title)
+        playbackButton.setAccessibilityLabel(title)
+    }
+    @objc private func playWallpaper() {
+        guard let item else { return }
+        onPlaybackAction?(item)
+    }
+    private let hoverName = LibraryHoverName()
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
         let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area); tracking = area
     }
-    override func mouseEntered(with event: NSEvent) { hovered = true; updateHover() }
-    override func mouseExited(with event: NSEvent) { hovered = false; updateHover() }
+    override func mouseEntered(with event: NSEvent) { setPointerHovered(true) }
+    override func mouseExited(with event: NSEvent) { setPointerHovered(false) }
+    func setPointerHovered(_ value: Bool) {
+        let value = value && !trackingInteraction && window?.isKeyWindow == true
+        guard hovered != value else { return }
+        hovered = value
+        updateHover()
+    }
     private func updateHover() {
         quickMenu.isHidden = !hovered
+        playbackButton.isHidden = !hovered
+        hoverName.setHovered(hovered)
         layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(hovered ? 0.07 : 0).cgColor
         thumbnailView.layer?.borderColor = NSColor.white.withAlphaComponent(0.30).cgColor
         thumbnailView.layer?.borderWidth = 0
@@ -341,10 +433,12 @@ final class LibraryCardView: NSView, NSDraggingSource {
     @objc private func showQuickMenu() {
         guard let item, let menu = onMenu?(item) else { return }
         onClick?(item)
+        menu.delegate = self
         menu.popUp(positioning: nil, at: NSPoint(x: quickMenu.frame.minX, y: quickMenu.frame.maxY), in: self)
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let hit = super.hitTest(point) else { return nil }
+        if hit === playbackButton || hit.isDescendant(of: playbackButton) { return hit }
         if hit === quickMenu || hit.isDescendant(of: quickMenu) { return hit }
         return self
     }
@@ -354,23 +448,42 @@ final class LibraryCardView: NSView, NSDraggingSource {
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x-origin.x, point.y-origin.y) > 5, let url = onDragURL?(item) else { return }
         mouseOrigin = nil
+        trackingInteraction = true
+        setPointerHovered(false)
         let dragging = NSDraggingItem(pasteboardWriter: url as NSURL)
         dragging.setDraggingFrame(thumbnailView.frame, contents: thumbnailView.image)
         beginDraggingSession(with: [dragging], event: event, source: self)
     }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
-    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragEnd?() }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { trackingInteraction = false; onDragEnd?() }
 
     override var isFlipped: Bool { true }
     var onMenu: ((LibraryItem) -> NSMenu?)?
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let item else { return nil }
         onClick?(item)
-        return onMenu?(item)
+        let menu = onMenu?(item)
+        menu?.delegate = self
+        return menu
+    }
+    func menuWillOpen(_ menu: NSMenu) {
+        trackingInteraction = true
+        setPointerHovered(false)
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        trackingInteraction = false
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        setPointerHovered(visibleRect.contains(point))
     }
     private(set) var item: LibraryItem?
     var isSelected = false {
-        didSet { updateBorder() }
+        didSet {
+            guard oldValue != isSelected else { return }
+            if isSelected, artworkTint == nil, let image = thumbnailView.image,
+               image !== Self.placeholderImage { updateArtworkTint(image) }
+            updateBorder()
+        }
     }
     var onClick: ((LibraryItem) -> Void)?
     var onDoubleClick: ((LibraryItem) -> Void)?
@@ -405,7 +518,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
         }
         artworkTint = artworkLights.first
         selectionEdge.tint = artworkTint
-        superview?.needsDisplay = true
+
     }
 
     private let titleLabel = NSTextField(labelWithString: "")
@@ -429,8 +542,16 @@ final class LibraryCardView: NSView, NSDraggingSource {
 
         titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
         titleLabel.lineBreakMode = .byTruncatingTail
-        addSubview(titleLabel)
-        quickMenu.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Wallpaper actions")
+        titleLabel.isHidden = true
+        quickMenu.image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { _ in
+            NSColor.white.setFill()
+            for x in [CGFloat(5), 12, 19] {
+                NSBezierPath(ovalIn: NSRect(x: x - 1.5, y: 10.5, width: 3, height: 3)).fill()
+            }
+            return true
+        }
+        quickMenu.imagePosition = .imageOnly
+        addSubview(hoverName)
         quickMenu.isBordered = false
         quickMenu.contentTintColor = .white
         quickMenu.wantsLayer = true
@@ -441,6 +562,17 @@ final class LibraryCardView: NSView, NSDraggingSource {
         quickMenu.toolTip = "Wallpaper actions"
         quickMenu.isHidden = true
         addSubview(quickMenu)
+        playbackButton.imagePosition = .imageOnly
+        playbackButton.isBordered = false
+        playbackButton.contentTintColor = .white
+        playbackButton.wantsLayer = true
+        playbackButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        playbackButton.layer?.cornerRadius = 8
+        playbackButton.target = self
+        playbackButton.action = #selector(playWallpaper)
+        playbackButton.isHidden = true
+        updatePlaybackButton()
+        addSubview(playbackButton)
         addSubview(selectionEdge)
 
         badgeLabel.font = .systemFont(ofSize: 10, weight: .regular)
@@ -455,8 +587,10 @@ final class LibraryCardView: NSView, NSDraggingSource {
         super.layout()
         selectionEdge.frame = bounds
         let thumbHeight = bounds.width * 9.0 / 16.0
-        thumbnailView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: thumbHeight)
-        quickMenu.frame = NSRect(x: bounds.width - 36, y: 6, width: 28, height: 26)
+        thumbnailView.frame = bounds
+        playbackButton.frame = NSRect(x: 6, y: 6, width: 34, height: 34)
+        quickMenu.frame = NSRect(x: bounds.width - 40, y: 6, width: 34, height: 34)
+        hoverName.frame = NSRect(x: 0, y: bounds.height - 26, width: bounds.width, height: 26)
         let labelY = thumbHeight + 5
         titleLabel.frame = NSRect(x: 8, y: labelY, width: max(0, bounds.width - 16), height: 18)
         badgeLabel.frame = NSRect(x: 8, y: labelY + 18, width: max(0, bounds.width - 16), height: 14)
@@ -471,12 +605,17 @@ final class LibraryCardView: NSView, NSDraggingSource {
             self.item = item
             artworkTint = nil
             artworkLights = []
-            superview?.needsDisplay = true
+            selectionEdge.tint = nil
+
             thumbnailView.image = Self.placeholderImage
         } else {
             self.item = item
         }
-        titleLabel.stringValue = SceneLibraryController.displayTitle(item.title)
+        let title = SceneLibraryController.displayTitle(item.title)
+        if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        toolTip = nil
+        if hoverName.text != title { hoverName.text = title }
+        thumbnailView.setAccessibilityLabel(titleLabel.stringValue)
         let mediaType = item.builtin != nil ? "scene" : item.entry?.inferredMediaType
         switch mediaType {
         case "video": badgeLabel.stringValue = "Video"
@@ -491,6 +630,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
         super.prepareForReuse()
         cancelThumbnailRequest()
         item = nil
+        trackingInteraction = false
         hovered = false
         updateHover()
         isSelected = false
@@ -518,7 +658,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
                           self.thumbnailGeneration == generation,
                           self.item?.id == itemID else { return }
                     self.thumbnailView.image = image
-                    self.updateArtworkTint(image)
+                    if self.isSelected { self.updateArtworkTint(image) }
                 }
                 if Thread.isMainThread { apply() }
                 else { DispatchQueue.main.async(execute: apply) }
@@ -551,7 +691,7 @@ final class LibraryCardView: NSView, NSDraggingSource {
     }
 }
 
-private final class LibrarySelectionEdge: NSView {
+final class LibrarySelectionEdge: NSView {
     var tint: NSColor? { didSet { needsDisplay = true } }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
@@ -567,3 +707,88 @@ private final class LibrarySelectionEdge: NSView {
 }
 
 #endif
+
+
+/// Full-card-width hover caption. Overflow travels once after a reading pause.
+private final class LibraryHoverName: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private var pending: DispatchWorkItem?
+    private var hovered = false
+    private var measuredWidth: CGFloat = -1
+    var text = "" {
+        didSet {
+            guard text != oldValue else { return }
+            label.stringValue = text
+            measuredWidth = -1
+            needsLayout = true
+        }
+    }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        let surface: NSView
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 0
+            surface = glass
+        } else {
+            let glass = NSVisualEffectView()
+            glass.material = .hudWindow
+            glass.blendingMode = .withinWindow
+            glass.state = .active
+            surface = glass
+        }
+        surface.autoresizingMask = [.width, .height]
+        surface.frame = bounds
+        addSubview(surface)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .white
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byClipping
+        label.wantsLayer = true
+        addSubview(label)
+        layer?.opacity = 0
+    }
+    required init?(coder: NSCoder) { nil }
+    override func layout() {
+        super.layout()
+        label.frame = NSRect(x: 12, y: 4,
+            width: max(bounds.width - 24, label.intrinsicContentSize.width), height: 18)
+        if measuredWidth != bounds.width {
+            measuredWidth = bounds.width
+            restartMotion()
+        }
+    }
+    func setHovered(_ hovered: Bool) {
+        self.hovered = hovered
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.opacity = hovered ? 1 : 0
+        CATransaction.commit()
+        layoutSubtreeIfNeeded()
+        restartMotion()
+    }
+    private func restartMotion() {
+        pending?.cancel()
+        pending = nil
+        label.layer?.removeAllAnimations()
+        guard hovered else { return }
+        let overflow = label.intrinsicContentSize.width - max(0, bounds.width - 24)
+        guard overflow > 2, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.layer?.opacity == 1 else { return }
+            let motion = CABasicAnimation(keyPath: "transform.translation.x")
+            motion.fromValue = 0
+            motion.toValue = -overflow
+            motion.duration = Double(overflow / 28)
+            motion.timingFunction = CAMediaTimingFunction(name: .linear)
+            motion.fillMode = .forwards
+            motion.isRemovedOnCompletion = false
+            self.label.layer?.add(motion, forKey: "readName")
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+}

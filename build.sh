@@ -264,6 +264,15 @@ case "${1:-all}" in
     build_app
     pkill -x Idlesse 2>/dev/null || true
     sleep 0.2
+    # The local build is the application; Applications is only a stable launcher.
+    local_app="$HOME/Applications/Idlesse.app"
+    mkdir -p "$(dirname "$local_app")"
+    if [[ ! -e "$local_app" || -L "$local_app" ]]; then
+      ln -sfn "$APP" "$local_app"
+    else
+      log "A separate copy exists at $local_app; replace it with a link to $APP."
+      exit 1
+    fi
     open "$APP"
     ;;
   install)

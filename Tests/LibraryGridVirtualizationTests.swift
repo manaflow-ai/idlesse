@@ -10,6 +10,13 @@ import AppKit
         precondition(wide.columns > narrow.columns, "Gallery must add columns as the viewport widens")
         precondition(wide.contentHeight < narrow.contentHeight, "More columns should reduce total scroll height")
 
+        let originalY = narrow.frame(for: 120)!.minY + narrow.rowStride * 0.3
+        let resizedY = wide.scrollOrigin(preserving: originalY, from: narrow)
+        let expectedY = wide.frame(for: 120)!.minY + wide.rowStride * 0.3
+        precondition(abs(resizedY - expectedY) < 0.01, "Resize must retain the visible wallpaper and row fraction")
+        precondition(wide.scrollOrigin(preserving: 0, from: narrow) == 0)
+        let bottom = wide.scrollOrigin(preserving: narrow.contentHeight, from: narrow)
+        precondition(bottom <= wide.contentHeight - wide.viewportHeight, "Resize must clamp at the end of the catalog")
         print("library grid virtualization tests passed")
     }
 

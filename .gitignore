@@ -11,3 +11,7 @@ scripts/media-batch/batch.json
 scripts/media-batch/plans/
 scripts/azur-lane/wallpapers.json
 scripts/azur-lane/candidates.json
+
+# Bounded local profiling artifacts
+.local/profiling/
+scripts/profiling/__pycache__/

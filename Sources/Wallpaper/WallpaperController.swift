@@ -367,12 +367,22 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             let assignmentRequest = UUID()
             displayAssignmentRequests[displayID] = assignmentRequest
             let assignmentGeneration = generation
+            preparingDisplayAssignments[displayID] = (assignmentGeneration, scopedURL)
+            NotificationCenter.default.post(name: .idlesseDisplayPreparationChanged, object: self)
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer {
+                    if self.displayAssignmentRequests[displayID] == assignmentRequest {
+                        self.preparingDisplayAssignments.removeValue(forKey: displayID)
+                        NotificationCenter.default.post(name: .idlesseDisplayPreparationChanged, object: self)
+                    }
+                }
                 let access = scopedURL.startAccessingSecurityScopedResource()
                 defer { if access { scopedURL.stopAccessingSecurityScopedResource() } }
                 do {
                     let candidate = try await self.source.resolve(scopedURL)
+                    guard self.generation == assignmentGeneration,
+                          self.displayAssignmentRequests[displayID] == assignmentRequest else { throw CancellationError() }
                     if candidate.canvas == .desktopSpan {
                         guard allowsDesktopSpan else {
                             self.showError("This wallpaper spans all displays. Use Set Wallpaper to apply it across the desktop.")
@@ -403,6 +413,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                             if adopted { self.showError(message) }
                         }
                         replacement = surface
+                        surface.window.alphaValue = 0
                         self.configureDesktopInteraction(surface)
                         if self.presentsWindows {
                             surface.prepareForDisplay()
@@ -442,9 +453,17 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                         self.surfaces.removeAll { $0.displayID == displayID }
                         self.surfaces.append(replacement)
                         adopted = true
+                        // Commit the prepared window just like a global selection.
+                        // Preparation deliberately hides it and disables interaction.
+                        self.pausedByUser = false
+                        self.clock.setPaused(self.suspended || self.shouldPause)
+                        self.configureDesktopInteraction(replacement)
+                        replacement.window.alphaValue = 1
                         replacement.setMuted(!self.soundEnabled)
                         replacement.setPaused(self.shouldPause)
                         if self.presentsWindows { replacement.show(paused: self.shouldPause) }
+                        self.saveSelection()
+                        self.revision += 1
                         previous.forEach { $0.close() }
                         if let active = self.activeSharedVideoHub, !self.surfaces.contains(where: { $0.videoHub === active }) {
                             self.activeSharedVideoHub?.close()
@@ -455,6 +474,7 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                                 request: self.generation, onlyDisplayID: displayID)
                         }
                         self.applySharedHubPause()
+                        self.surfaces.forEach { $0.setPaused(self.shouldPause) }
                         self.surfaces.forEach { $0.videoHub?.setMuted(!self.soundEnabled) }
                         self.updateMenu()
                         NotificationCenter.default.post(name: .idlesseDisplayAssignmentsChanged, object: self)
@@ -464,6 +484,8 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
                 } catch is CancellationError {
                     return
                 } catch {
+                    guard self.generation == assignmentGeneration,
+                          self.displayAssignmentRequests[displayID] == assignmentRequest else { return }
                     self.showError("The Library wallpaper could not be assigned: " + error.localizedDescription)
                 }
             }
@@ -730,6 +752,10 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
     private var sessionInactive = false
     private var generation = 0
     private var displayAssignmentRequests: [UInt32: UUID] = [:]
+    private var preparingDisplayAssignments: [UInt32: (generation: Int, url: URL)] = [:]
+    var preparingDisplayURLs: [UInt32: URL] {
+        preparingDisplayAssignments.filter { $0.value.generation == generation }.mapValues(\.url)
+    }
     private var surfaceGeneration = 0
     private(set) var isLoading = false
     private var loadTask: Task<Void, Never>?
@@ -1530,6 +1556,10 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
         coverageMonitor.reset()
         for surface in surfaces { surface.setCovered(false) }
         applySharedHubPause()
+        dispatchDesktopReveal(started: started)
+    }
+
+    private func dispatchDesktopReveal(started: Double) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["1"]
         configuration.activates = false
@@ -1704,18 +1734,28 @@ final class WallpaperController: NSObject, NSMenuItemValidation {
             throw SceneError.invalid("Targeted assignment check needs two connected displays")
         }
         let untouched = initial.surfaces.filter { $0 !== target }
+        controller.pausedByUser = true
+        controller.surfaces.forEach { $0.setPaused(true) }
         controller.assignLibraryWallpaper(imageURL, to: target.displayID)
+        precondition(controller.preparingDisplayURLs[target.displayID] != nil, "Target must expose preparation immediately")
         let deadline = Date().addingTimeInterval(10)
         while controller.surfaces.contains(where: { $0 === target }) && errors.isEmpty && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.02))
         }
         precondition(errors.isEmpty, "Targeted assignment failed: \(errors)")
+        precondition(controller.preparingDisplayURLs.isEmpty, "Completed assignment must clear preparation state")
         precondition(!controller.surfaces.contains(where: { $0 === target }), "Target surface must be replaced")
         precondition(controller.surfaces.count == initial.surfaces.count)
+        let committed = controller.surfaces.first { $0.displayID == target.displayID }!
+        precondition(committed.window.alphaValue == 1, "Targeted assignment must reveal the prepared live window")
+        precondition(committed.pausedState == controller.shouldPause, "Targeted playback must match transport state")
         for surface in untouched {
             precondition(controller.surfaces.contains(where: { $0 === surface }), "Other displays must keep their renderer and playback state")
         }
         precondition(!controller.sameWallpaperOnAllDisplays)
+        precondition(!controller.pausedByUser, "An explicit drop must resume transport like All Displays")
+        precondition(controller.surfaces.allSatisfy { $0.pausedState == controller.shouldPause },
+                     "All retained surfaces must agree with the shared transport after a drop")
         if let hub = initial.hub {
             precondition(controller.surfaces.allSatisfy { $0.videoHub === hub }, "Identical videos must join the existing decoder")
             precondition(controller.activeSharedVideoHub === hub, "Joining a synchronized group must retain its transport")
