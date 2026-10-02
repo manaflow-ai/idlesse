@@ -100,3 +100,7 @@ For the live engineering detail, use the docs instead of this README:
 ## Philosophy
 
 A desktop can hold a picture for longer than a few seconds. Idlesse is built around that idea: personal artwork, restrained playback, direct control, and enough creative machinery to make the desktop feel alive without turning it into a feed.
+
+## License
+
+Idlesse is licensed under the [Apache License 2.0](LICENSE).
