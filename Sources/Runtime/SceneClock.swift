@@ -2,7 +2,7 @@ import Foundation
 
 /// One monotonic timeline shared by every surface of an active scene.
 /// Video loops are not frame-locked to this clock yet.
-final class SceneClock {
+public final class SceneClock {
     private let now: () -> TimeInterval
     private var anchor: TimeInterval
     private var accumulated: TimeInterval = 0
@@ -10,24 +10,24 @@ final class SceneClock {
     private(set) var revision: UInt64 = 0
     private(set) var playbackRate: Double = 1
     private(set) var loopRange: Range<TimeInterval>?
-    private(set) var isPaused = true
+    public private(set) var isPaused = true
     /// Explicit host opt-in, never granted by a package manifest.
-    var pointerEnabled = false
-    var audioEnabled = false { didSet { audioActivityChanged?(audioEnabled && !isPaused) } }
+    public var pointerEnabled = false
+    public var audioEnabled = false { didSet { audioActivityChanged?(audioEnabled && !isPaused) } }
     var audioActivityChanged: ((Bool) -> Void)?
-    var audioLevels: () -> SceneAudioLevels = { SceneAudioLevels() }
-    init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+    public var audioLevels: () -> SceneAudioLevels = { SceneAudioLevels() }
+    public init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.now = now
         anchor = now()
     }
     private var phase: TimeInterval { accumulated + (isPaused ? 0 : max(0, now() - anchor) * playbackRate) }
-    var time: TimeInterval { wrapped(phase) }
+    public var time: TimeInterval { wrapped(phase) }
     var isAtEnd: Bool { authored?.mode == .once && phase >= (authored?.duration ?? 0) }
     var effectiveRate: Double {
         if isPaused || isAtEnd { return 0 }
         return playbackRate
     }
-    func configure(timeline: SceneTimeline?) throws {
+    public func configure(timeline: SceneTimeline?) throws {
         try timeline?.validate()
         try configure(time: 0, rate: timeline?.rate ?? 1, loop: nil)
         authored = timeline
@@ -77,7 +77,7 @@ final class SceneClock {
         accumulated = time
         anchor = now()
     }
-    func setPaused(_ paused: Bool) {
+    public func setPaused(_ paused: Bool) {
         guard paused != isPaused else { return }
         accumulated = phase
         anchor = now()
