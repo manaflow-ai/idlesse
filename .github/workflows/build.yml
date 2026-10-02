@@ -31,6 +31,51 @@ jobs:
           xcrun swiftc Encode.swift -o "$RUNNER_TEMP/media-encode" -framework AppKit -framework WebKit
           popd
 
+      - name: Build IdlesseRuntime library product
+        run: |
+          set -euo pipefail
+          # build.sh falls back to raw swiftc when SwiftPM fails, so build the
+          # package directly: the app target and the symlinked library target.
+          swift build
+          # Compile an out-of-package host against the public embedding API.
+          host="$RUNNER_TEMP/runtime-host"
+          mkdir -p "$host/Sources/RuntimeHost"
+          cat > "$host/Package.swift" <<SWIFT
+          // swift-tools-version: 6.0
+          import PackageDescription
+          let package = Package(
+              name: "RuntimeHost",
+              platforms: [.macOS(.v14)],
+              dependencies: [.package(path: "$GITHUB_WORKSPACE")],
+              targets: [.executableTarget(name: "RuntimeHost",
+                  dependencies: [.product(name: "IdlesseRuntime", package: "idlesse")],
+                  swiftSettings: [.swiftLanguageMode(.v5)])]
+          )
+          SWIFT
+          cat > "$host/Sources/RuntimeHost/main.swift" <<'SWIFT'
+          import AppKit
+          import IdlesseRuntime
+
+          @MainActor func embed(_ url: URL, in host: NSView) async throws -> MetalSceneRenderer {
+              let scene: SceneDescriptor = try await LocalSceneSource().resolve(url)
+              let clock = SceneClock()
+              try clock.configure(timeline: scene.timeline)
+              clock.audioEnabled = true
+              clock.audioLevels = { SceneAudioLevels(level: 0.5, bass: 0.25, mid: 0.1, treble: 0) }
+              clock.pointerEnabled = false
+              let renderer = try MetalSceneRenderer(playable: scene, bounds: host.bounds, scale: 2, clock: clock) { print($0) }
+              renderer.onFirstFrameReady = { print(renderer.isReadyForDisplay) }
+              host.addSubview(renderer.view)
+              renderer.setPreferredFrameRate(30)
+              renderer.setMuted(true)
+              clock.setPaused(false)
+              renderer.setPaused(false)
+              print(scene.title, clock.time, clock.isPaused)
+              return renderer
+          }
+          SWIFT
+          swift build --package-path "$host"
+
       - name: Build development preview and arm64 saver
         run: ./build.sh
 

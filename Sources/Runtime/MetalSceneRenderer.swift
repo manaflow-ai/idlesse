@@ -179,7 +179,7 @@ extension SceneNode.Shader {
 
 /// Experimental SDR compositor. One drawable per display; groups use bounded offscreen passes.
 /// Keep the layer renderer as the default until color and power parity are measured.
-final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
+public final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
     // Optional GPU-only presentation consumer; it must not retain the source drawable.
     var mirrorFrame: ((MTLCommandBuffer, CAMetalDrawable) -> Void)? {
         didSet { metal.framebufferOnly = mirrorFrame == nil }
@@ -288,7 +288,7 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
     private let presentations = PresentedFrameCounter()
     var presentedFrameCount: Int? { presentations.total }
     var gpuTotals: (seconds: Double, frames: Int)? { presentations.gpuTotals }
-    let view: NSView
+    public let view: NSView
     private let metal: MTKView
     var desktopFrame: CGRect?
     var displayFrame: CGRect?
@@ -330,8 +330,14 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
 
     private var sharedHub: SharedVideoHub?
 
+    /// Embedding hosts render a resolved scene into `view`, driven by `clock`.
+    public convenience init(playable: SceneDescriptor, bounds: NSRect, scale: CGFloat, clock: SceneClock,
+                            onError: @escaping (String) -> Void) throws {
+        try self.init(playable: playable, bounds: bounds, scale: scale, clock: clock, onError: onError, sharedHub: nil)
+    }
+
     init(playable: SceneDescriptor, bounds: NSRect, scale: CGFloat, clock: SceneClock,
-         onError: @escaping (String) -> Void, sharedHub: SharedVideoHub? = nil) throws {
+         onError: @escaping (String) -> Void, sharedHub: SharedVideoHub?) throws {
         self.sharedHub = sharedHub
         let authored = playable
         let playable = try playable.evaluated()
@@ -446,7 +452,7 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
         metal.delegate = self
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+    public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         needsFrame = true
         if !diagnostics.animated { view.draw() }
     }
@@ -769,11 +775,11 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
         metal.draw()
         return true
     }
-    var onFirstFrameReady: (() -> Void)?
+    public var onFirstFrameReady: (() -> Void)?
     private var deliveredFirstFrame = false
-    var isReadyForDisplay: Bool { deliveredFirstFrame }
+    public var isReadyForDisplay: Bool { deliveredFirstFrame }
 
-    func draw(in view: MTKView) {
+    public func draw(in view: MTKView) {
         guard diagnostics.state != .disposed, let queue, gate.wait(timeout: .now()) == .success else { return }
         if diagnostics.state == .running { updateSignals(sampledSignals()) }
         let changed = updateVideos()
@@ -1078,7 +1084,7 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
         }
     }
 
-    func setPreferredFrameRate(_ rate: Int?) {
+    public func setPreferredFrameRate(_ rate: Int?) {
         guard diagnostics.state != .disposed else { return }
         let targetRate = rate ?? 60
         let requiresHighRefresh = (sourceScene?.usesPointer == true && clock.pointerEnabled) ||
@@ -1086,7 +1092,7 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
                                   (roots.flatMap { $0.descendants }.contains { $0.kind == .particles || $0.kind == .shader })
         metal.preferredFramesPerSecond = requiresHighRefresh ? targetRate : min(targetRate, 60)
     }
-    func setPaused(_ paused: Bool) {
+    public func setPaused(_ paused: Bool) {
         bindingSmoother.reset()
         guard diagnostics.state != .disposed else { return }
         diagnostics.state = paused ? .paused : .running
@@ -1099,14 +1105,14 @@ final class MetalSceneRenderer: NSObject, SceneRenderer, MTKViewDelegate {
         updateDrawScheduling()
         if !diagnostics.animated || inputs.contains(where: { $0.followsClock }) { metal.draw() }
     }
-    func setMuted(_ muted: Bool) {
+    public func setMuted(_ muted: Bool) {
         guard diagnostics.state != .disposed else { return }
         inputs.forEach {
             $0.player?.isMuted = muted
             if !muted { $0.player?.volume = 1 }
         }
     }
-    func releaseResources() {
+    public func releaseResources() {
         textTimer?.invalidate(); textTimer = nil
         metal.isPaused = true
         metal.delegate = nil

@@ -1,6 +1,6 @@
 import Foundation
 
-struct SceneTimeline: Codable, Sendable, Equatable {
+public struct SceneTimeline: Codable, Sendable, Equatable {
     enum Mode: String, Codable, Sendable { case once, loop, pingPong }
     var duration: Double
     var mode: Mode
@@ -10,7 +10,7 @@ struct SceneTimeline: Codable, Sendable, Equatable {
     init(duration: Double, mode: Mode, rate: Double = 1, videosFollowScene: Bool = false) {
         self.duration = duration; self.mode = mode; self.rate = rate; self.videosFollowScene = videosFollowScene
     }
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         duration = try values.decode(Double.self, forKey: .duration)
         mode = try values.decode(Mode.self, forKey: .mode)
@@ -137,7 +137,7 @@ struct SceneBleed: Codable, Sendable, Equatable {
 }
 
 /// Metadata only: resolving a scene never retains decoded pixels or a player.
-struct SceneDescriptor: Codable, Sendable {
+public struct SceneDescriptor: Codable, Sendable {
     enum Kind: String, Codable, Sendable { case image, video, gradient, group, particles, text, shape, shader }
     enum Canvas: String, Codable, Sendable { case perDisplay, desktopSpan }
     var canvas: Canvas? = nil
@@ -147,11 +147,11 @@ struct SceneDescriptor: Codable, Sendable {
     var bleed: SceneBleed? = nil
     var metadata: SceneMetadata? = nil
     var components: [String: SceneComponent]? = nil
-    let title: String
+    public let title: String
     let nodes: [SceneNode]
     var parameters: [String: SceneParameter] = [:]
     var bindings: [SceneParameterBinding] = []
-    var timeline: SceneTimeline? = nil
+    public var timeline: SceneTimeline? = nil
     var variants: [SceneVariant] = []
     var assetURL: URL? { nodes.first?.assetURL }
     var kind: Kind { nodes.first?.kind ?? .image }
@@ -180,7 +180,7 @@ struct SceneDescriptor: Codable, Sendable {
         self.title = title; self.nodes = nodes; self.parameters = parameters; self.bindings = bindings; self.timeline = timeline; self.canvas = canvas; self.metadata = metadata; self.components = components; self.variants = variants; self.focus = focus; self.bleed = bleed
     }
     enum CodingKeys: String, CodingKey { case canvas, metadata, components, title, nodes, parameters, bindings, timeline, variants, focus, bleed }
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         focus = try c.decodeIfPresent(SceneFocus.self, forKey: .focus)
         bleed = try c.decodeIfPresent(SceneBleed.self, forKey: .bleed)
@@ -720,11 +720,14 @@ struct SceneParameterBinding: Codable, Sendable {
     }
 }
 
-struct SceneAudioLevels: Sendable {
-    var level: Double = 0
-    var bass: Double = 0
-    var mid: Double = 0
-    var treble: Double = 0
+public struct SceneAudioLevels: Sendable {
+    public init(level: Double = 0, bass: Double = 0, mid: Double = 0, treble: Double = 0) {
+        self.level = level; self.bass = bass; self.mid = mid; self.treble = treble
+    }
+    public var level: Double = 0
+    public var bass: Double = 0
+    public var mid: Double = 0
+    public var treble: Double = 0
 }
 
 struct SceneSignals: Sendable {
@@ -1054,7 +1057,8 @@ enum SceneError: LocalizedError {
     }
 }
 
-struct LocalSceneSource: SceneSource {
+public struct LocalSceneSource: SceneSource {
+    public init() {}
     private struct Manifest: Decodable {
         let version: Int
         let title: String
@@ -1103,7 +1107,7 @@ struct LocalSceneSource: SceneSource {
         }
     }
 
-    func resolve(_ url: URL) async throws -> SceneDescriptor {
+    public func resolve(_ url: URL) async throws -> SceneDescriptor {
         let task = Task.detached(priority: .userInitiated) { try Self.read(url) }
         return try await withTaskCancellationHandler(operation: {
             let result = try await task.value
